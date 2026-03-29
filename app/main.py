@@ -8,7 +8,11 @@ with a clear pydantic ValidationError.
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from app.config import settings  # noqa: F401 -- fail-fast import
+from app.logging_config import configure_logging
 from app.api.webhooks import router as webhooks_router
+
+# Initialize structlog JSON logging before anything else
+configure_logging()
 
 app = FastAPI(title="Vive Polanco Backend", docs_url=None, redoc_url=None)
 app.include_router(webhooks_router)
