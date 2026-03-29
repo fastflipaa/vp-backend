@@ -13,10 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY scripts/ ./scripts/
 
-# Make healthcheck script executable
-RUN chmod +x scripts/celery_healthcheck.py
+# Copy entrypoint and make scripts executable
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh scripts/celery_healthcheck.py
 
 EXPOSE 8000
 
-# Default CMD (vp-api) -- overridden per Coolify resource
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# SERVICE_ROLE env var selects: api (default), worker, beat, flower
+ENTRYPOINT ["./entrypoint.sh"]
