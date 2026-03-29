@@ -13,8 +13,8 @@ celery_app = Celery(
     backend=settings.redis_result_url,
 )
 
-# Autodiscover tasks in app.tasks package
-celery_app.autodiscover_tasks(["app.tasks"])
+# Register tasks explicitly (autodiscover expects tasks.py, our files have custom names)
+import app.tasks.test_task  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
