@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     GHL_TOKEN: str
     GHL_LOCATION_ID: str
 
+    # Optional
+    SLACK_WEBHOOK_URL: str = ""
+
     # Derived Redis URLs for different databases
     @property
     def redis_broker_url(self) -> str:
