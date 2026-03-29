@@ -8,8 +8,10 @@ with a clear pydantic ValidationError.
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from app.config import settings  # noqa: F401 -- fail-fast import
+from app.api.webhooks import router as webhooks_router
 
 app = FastAPI(title="Vive Polanco Backend", docs_url=None, redoc_url=None)
+app.include_router(webhooks_router)
 
 
 @app.get("/health")
