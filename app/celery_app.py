@@ -2,9 +2,12 @@
 
 Configures Celery with Redis broker (db0) and result backend (db1).
 Uses late ack, prefetch=1, and crash-recovery settings.
+Includes Celery Beat schedule for daily shadow summary report.
 """
 
 from celery import Celery
+from celery.schedules import crontab
+
 from app.config import settings
 
 celery_app = Celery(
@@ -17,6 +20,7 @@ celery_app = Celery(
 import app.tasks.test_task  # noqa: F401, E402
 import app.tasks.gate_tasks  # noqa: F401, E402
 import app.tasks.alerting_tasks  # noqa: F401, E402
+import app.tasks.reporting_tasks  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -39,3 +43,11 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
 )
+
+# Celery Beat schedule -- runs on vp-beat container
+celery_app.conf.beat_schedule = {
+    "daily-shadow-summary": {
+        "task": "reporting.daily_shadow_summary",
+        "schedule": crontab(hour=8, minute=0),  # 8:00 AM CDMX (timezone already set to America/Mexico_City)
+    },
+}
