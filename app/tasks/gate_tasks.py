@@ -14,7 +14,9 @@ from app.celery_app import celery_app
 from app.config import settings
 from app.gates.dedup import check_dedup
 from app.gates.human_lock import check_human_lock
+from app.gates.night_mode import check_night_mode
 from app.gates.pipeline import SafetyPipeline
+from app.gates.rate_limit import check_rate_limit
 
 logger = structlog.get_logger()
 
@@ -43,7 +45,9 @@ def _build_pipeline() -> SafetyPipeline:
     gates = [
         ("dedup", lambda p, t: check_dedup(p, t, _redis_client)),
         ("human_lock", lambda p, t: check_human_lock(p, t, _redis_client)),
-        # TODO: Add rate_limit, night_mode, injection, exfiltration, broker gates (Plans 15-02, 15-03)
+        ("rate_limit", lambda p, t: check_rate_limit(p, t, _redis_client)),
+        ("night_mode", lambda p, t: check_night_mode(p, t, _redis_client)),
+        # TODO: Add injection, exfiltration, broker gates (Plan 15-03)
     ]
     return SafetyPipeline(gates=gates)
 
