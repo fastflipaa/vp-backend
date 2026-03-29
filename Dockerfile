@@ -15,7 +15,7 @@ COPY scripts/ ./scripts/
 
 # Copy entrypoint and make scripts executable
 COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh scripts/celery_healthcheck.py
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh scripts/celery_healthcheck.py
 
 EXPOSE 8000
 
