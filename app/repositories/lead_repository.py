@@ -269,6 +269,104 @@ class LeadRepository:
             "total_interactions": total_interactions,
         }
 
+    # --- Health check queries ---
+
+    async def find_missed_inbound(
+        self,
+        window_minutes: int = 20,
+        response_threshold_minutes: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Find leads with unanswered inbound messages.
+
+        Returns leads who sent an inbound message within the last
+        ``window_minutes`` but received no outbound response within
+        ``response_threshold_minutes`` of that inbound message.
+
+        Excludes BROKER and CLOSED leads (terminal states).
+        """
+        async with self._driver.session() as session:
+            results = await session.execute_read(
+                self._find_missed_inbound_tx,
+                window_minutes,
+                response_threshold_minutes,
+            )
+            logger.info(
+                "missed_inbound_query",
+                window_minutes=window_minutes,
+                threshold_minutes=response_threshold_minutes,
+                found=len(results),
+            )
+            return results
+
+    @staticmethod
+    async def _find_missed_inbound_tx(
+        tx, window_minutes: int, response_threshold_minutes: int
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead)-[:HAS_INTERACTION]->(i:Interaction {role: 'user'})
+            WHERE i.created_at > datetime() - duration({minutes: $window})
+            AND NOT EXISTS {
+              MATCH (l)-[:HAS_INTERACTION]->(r:Interaction {role: 'assistant'})
+              WHERE r.created_at > i.created_at
+              AND r.created_at < i.created_at + duration({minutes: $threshold})
+            }
+            AND l.current_state <> 'BROKER'
+            AND l.current_state <> 'CLOSED'
+            RETURN DISTINCT l.ghl_contact_id AS contact_id,
+                   l.phone AS phone,
+                   l.name AS name,
+                   l.current_state AS state
+            """,
+            window=window_minutes,
+            threshold=response_threshold_minutes,
+        )
+        return [dict(record) async for record in result]
+
+    async def create_recovery_attempt(
+        self,
+        contact_id: str,
+        trace_id: str,
+        reason: str,
+    ) -> None:
+        """Create a :RecoveryAttempt audit node linked to a lead.
+
+        Records that a recovery message was attempted for this lead,
+        including the trace_id for full traceability and the reason
+        (e.g. ``missed_inbound_10min``).
+        """
+        async with self._driver.session() as session:
+            await session.execute_write(
+                self._create_recovery_attempt_tx,
+                contact_id,
+                trace_id,
+                reason,
+            )
+            logger.info(
+                "recovery_attempt_created",
+                contact_id=contact_id,
+                trace_id=trace_id,
+                reason=reason,
+            )
+
+    @staticmethod
+    async def _create_recovery_attempt_tx(
+        tx, contact_id: str, trace_id: str, reason: str
+    ) -> None:
+        await tx.run(
+            """
+            MERGE (l:Lead {ghl_contact_id: $cid})
+            CREATE (l)-[:HAS_RECOVERY]->(r:RecoveryAttempt {
+                trace_id: $tid,
+                reason: $reason,
+                created_at: datetime()
+            })
+            """,
+            cid=contact_id,
+            tid=trace_id,
+            reason=reason,
+        )
+
     # --- Utility ---
 
     @staticmethod
