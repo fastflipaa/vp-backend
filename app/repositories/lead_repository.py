@@ -367,6 +367,108 @@ class LeadRepository:
             reason=reason,
         )
 
+    # --- Stale lead queries ---
+
+    async def find_stale_leads(
+        self,
+        min_inactive_days: int,
+        max_inactive_days: int,
+        states: list[str],
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Find leads inactive for a given window in specified states.
+
+        Returns leads whose ``updatedAt`` falls between ``min_inactive_days``
+        and ``max_inactive_days`` ago, in one of the given ``states``.
+        Excludes leads who received a :RecoveryAttempt within the last 24 hours
+        to avoid over-contacting.
+
+        Used by the stale re-engagement task (HOT/WARM/COLD tiers).
+        """
+        async with self._driver.session() as session:
+            results = await session.execute_read(
+                self._find_stale_leads_tx,
+                min_inactive_days,
+                max_inactive_days,
+                states,
+                limit,
+            )
+            logger.info(
+                "stale_leads_query",
+                min_days=min_inactive_days,
+                max_days=max_inactive_days,
+                states=states,
+                found=len(results),
+            )
+            return results
+
+    @staticmethod
+    async def _find_stale_leads_tx(
+        tx,
+        min_inactive_days: int,
+        max_inactive_days: int,
+        states: list[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead)
+            WHERE l.current_state IN $states
+            AND l.updatedAt < datetime() - duration({days: $min_days})
+            AND l.updatedAt > datetime() - duration({days: $max_days})
+            AND NOT EXISTS {
+              MATCH (l)-[:HAS_RECOVERY]->(r:RecoveryAttempt)
+              WHERE r.created_at > datetime() - duration({days: 1})
+            }
+            RETURN l.ghl_contact_id AS contact_id,
+                   l.phone AS phone,
+                   l.name AS name,
+                   l.current_state AS state,
+                   l.language AS language
+            LIMIT $limit
+            """,
+            states=states,
+            min_days=min_inactive_days,
+            max_days=max_inactive_days,
+            limit=limit,
+        )
+        return [dict(record) async for record in result]
+
+    async def find_followup_due(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Find leads in FOLLOW_UP state needing a follow-up message.
+
+        Returns leads whose last interaction (``updatedAt``) was more than
+        24 hours ago but less than 30 days ago. Leads silent for over 30 days
+        are handled by the stale re-engagement COLD tier instead.
+        """
+        async with self._driver.session() as session:
+            results = await session.execute_read(
+                self._find_followup_due_tx,
+                limit,
+            )
+            logger.info("followup_due_query", found=len(results))
+            return results
+
+    @staticmethod
+    async def _find_followup_due_tx(
+        tx, limit: int
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead)
+            WHERE l.current_state = 'FOLLOW_UP'
+            AND l.updatedAt < datetime() - duration({hours: 24})
+            AND l.updatedAt > datetime() - duration({days: 30})
+            RETURN l.ghl_contact_id AS contact_id,
+                   l.phone AS phone,
+                   l.name AS name,
+                   l.language AS language
+            LIMIT $limit
+            """,
+            limit=limit,
+        )
+        return [dict(record) async for record in result]
+
     # --- Utility ---
 
     @staticmethod
