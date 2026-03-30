@@ -44,6 +44,13 @@ async def shadow_inbound(request: Request) -> JSONResponse:
         messageId=payload.get("messageId", ""),
     )
 
+    # Synchronous canary check so n8n knows whether to skip its own processing.
+    # Uses config + tags only (no Redis needed for the routing decision).
+    from app.services.canary_router import should_route_canary
+
+    tags = payload.get("tags", [])
+    is_canary = should_route_canary(tags, None)
+
     # Lazy import to avoid circular imports (celery_app -> config -> settings)
     from app.tasks.gate_tasks import process_gates_shadow
 
@@ -51,7 +58,7 @@ async def shadow_inbound(request: Request) -> JSONResponse:
 
     return JSONResponse(
         status_code=200,
-        content={"status": "accepted", "trace_id": trace_id},
+        content={"status": "accepted", "trace_id": trace_id, "is_canary": is_canary},
     )
 
 

@@ -196,12 +196,46 @@ def process_gates_shadow(payload: dict, trace_id: str) -> dict:
     # Block-rate monitoring (non-fatal)
     _monitor_block_rate(result.overall_decision, trace_id)
 
-    # Shadow comparison (non-fatal)
-    _run_shadow_comparison(result, payload, trace_id)
+    # -- Canary Routing (Phase 17) --
+    from app.services.canary_router import should_route_canary, track_canary_result
+
+    tags = payload.get("tags", [])
+    is_canary = should_route_canary(tags, _redis_client)
+
+    if is_canary and result.overall_decision == GateDecision.PASS:
+        # Canary contact with all gates PASS: process end-to-end via FastAPI
+        from app.tasks.processing_task import process_message
+
+        process_message.delay(payload, trace_id)
+        track_canary_result(_redis_client, success=True, latency_ms=result.total_duration_ms)
+        logger.info(
+            "canary_routed",
+            trace_id=trace_id,
+            contact_id=result.contact_id,
+        )
+    elif is_canary and result.overall_decision == GateDecision.BLOCK:
+        # Canary contact blocked by gates -- still track as canary
+        track_canary_result(_redis_client, success=True, latency_ms=result.total_duration_ms)
+        logger.info(
+            "canary_blocked",
+            trace_id=trace_id,
+            contact_id=result.contact_id,
+            blocked_by=result.short_circuited_at,
+        )
+    else:
+        # Non-canary: shadow comparison only (existing behavior, now conditional)
+        _run_shadow_comparison(result, payload, trace_id)
+        # Track shadow count
+        try:
+            _redis_client.incr("shadow:count:24h")
+            _redis_client.expire("shadow:count:24h", 86400)
+        except Exception:
+            pass  # Non-critical
 
     return {
         "trace_id": result.trace_id,
         "overall_decision": result.overall_decision.value,
+        "is_canary": is_canary,
         "gate_count": len(result.gate_results),
         "total_duration_ms": round(result.total_duration_ms, 2),
     }
