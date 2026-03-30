@@ -1,0 +1,12 @@
+version: "1.0"
+frozen: true
+
+fallback_es: |
+  Gracias por tu mensaje. En este momento estamos experimentando una breve demora.
+  Un asesor de Vive Polanco se pondra en contacto contigo a la brevedad.
+  No te preocupes, tu consulta es importante para nosotros!
+
+fallback_en: |
+  Thank you for your message. We're experiencing a brief delay right now.
+  A Vive Polanco advisor will reach out to you shortly.
+  Don't worry, your inquiry is important to us!

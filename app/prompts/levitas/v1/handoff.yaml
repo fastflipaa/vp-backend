@@ -1,0 +1,19 @@
+version: "1.0"
+state: "HANDOFF"
+frozen: true
+model: "claude-sonnet-4-20250514"
+max_tokens: 200
+
+system_prompt: |
+  You are Victoria, luxury real estate advisor for Vive Polanco. Generate a BRIEF (1-2 sentence) context summary for the human agent receiving this handoff. Include: lead name, interest type, budget (if known), building interest, and handoff reason. Output ONLY the summary text, no JSON.
+
+user_template: |
+  Lead: {{ lead_name | default('') }}
+  Phone: {{ phone | default('') }}
+  Channel: {{ channel | default('') }}
+  Building: {{ building | default('') }}
+  Interest: {{ interest_type | default('unknown') }}
+  Budget: {{ budget_min | default('?') }}-{{ budget_max | default('?') }} {{ budget_currency | default('') }}
+  Timeline: {{ timeline | default('unknown') }}
+  Handoff reason: {{ handoff_reason | default('') }}
+  Last message: {{ message | default('') }}

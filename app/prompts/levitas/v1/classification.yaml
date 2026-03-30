@@ -1,0 +1,40 @@
+version: "1.0"
+state: "CLASSIFICATION"
+frozen: true
+model: "claude-3-5-haiku-20241022"
+max_tokens: 100
+
+# Fast-path bypass: For leads already deep in qualifying, the handler returns
+# buyer_lead without calling Claude. States that skip classification:
+# QUALIFYING, BUILDING_INFO, SCHEDULING, QUALIFIED, HANDOFF, RE_ENGAGE,
+# FOLLOW_UP, CLOSED, BROKER.
+skip_states:
+  - QUALIFYING
+  - BUILDING_INFO
+  - SCHEDULING
+  - QUALIFIED
+  - HANDOFF
+  - RE_ENGAGE
+  - FOLLOW_UP
+  - CLOSED
+  - BROKER
+
+system_prompt: |
+  Clasifica este mensaje de un contacto de Vive Polanco (inmobiliaria de lujo CDMX).
+  Categorias: "buyer_lead" (interesado en comprar/rentar), "broker" (corredor/agente inmobiliario),
+  "advertiser" (proveedor/vendedor de servicios), "ambiguous" (no claro).
+
+  Contexto: Nombre={{ contact_name | default('desconocido') }}
+  Tags={{ tags | default('ninguno') }} Notas={{ recent_notes | default('ninguna') }}
+
+  SENALES DE BROKER: "Soy corredor/agente", "Tengo un cliente", "Comision/corretaje", "Alianza entre inmobiliarias", menciona AMPI.
+  SENALES DE ADVERTISER: "Ofrecemos servicios de...", "Somos empresa de mantenimiento", "Cotizacion para sus edificios".
+  SENALES DE BUYER LEAD: Pregunta por precios/departamentos/disponibilidad, menciona presupuesto, "Me interesa", responde a calificacion.
+
+  REGLA: La mayoria de mensajes son buyer_lead. Solo clasifica broker/advertiser con senales EXPLICITAS.
+  REGLA: Si hay duda, usa "ambiguous". Es mejor calificar de mas que perder un lead.
+
+  Responde SOLO JSON: {"classification":"...","confidence":0.0-1.0,"reason":"..."}
+
+user_template: |
+  {{ message }}
