@@ -21,6 +21,7 @@ import app.tasks.test_task  # noqa: F401, E402
 import app.tasks.gate_tasks  # noqa: F401, E402
 import app.tasks.alerting_tasks  # noqa: F401, E402
 import app.tasks.reporting_tasks  # noqa: F401, E402
+import app.tasks.processing_task  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -42,6 +43,13 @@ celery_app.conf.update(
     # Reliability: late ack + reject on worker lost
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    # Queue routing: separate gate and processing workers for independent scaling
+    task_routes={
+        "gates.*": {"queue": "celery"},
+        "processing.*": {"queue": "processing"},
+        "reporting.*": {"queue": "celery"},
+        "alerting.*": {"queue": "celery"},
+    },
 )
 
 # Celery Beat schedule -- runs on vp-beat container
