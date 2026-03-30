@@ -22,6 +22,10 @@ import app.tasks.gate_tasks  # noqa: F401, E402
 import app.tasks.alerting_tasks  # noqa: F401, E402
 import app.tasks.reporting_tasks  # noqa: F401, E402
 import app.tasks.processing_task  # noqa: F401, E402
+import app.tasks.scheduled.health_check  # noqa: F401, E402
+import app.tasks.scheduled.morning_drain  # noqa: F401, E402
+import app.tasks.scheduled.stale_reengagement  # noqa: F401, E402
+import app.tasks.scheduled.followup_sequence  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -49,6 +53,7 @@ celery_app.conf.update(
         "processing.*": {"queue": "processing"},
         "reporting.*": {"queue": "celery"},
         "alerting.*": {"queue": "celery"},
+        "scheduled.*": {"queue": "celery"},
     },
 )
 
@@ -57,5 +62,21 @@ celery_app.conf.beat_schedule = {
     "daily-shadow-summary": {
         "task": "reporting.daily_shadow_summary",
         "schedule": crontab(hour=8, minute=0),  # 8:00 AM CDMX (timezone already set to America/Mexico_City)
+    },
+    "health-check-5min": {
+        "task": "scheduled.health_check",
+        "schedule": crontab(minute="*/5"),
+    },
+    "morning-queue-drain": {
+        "task": "scheduled.morning_drain",
+        "schedule": crontab(hour=9, minute=1),
+    },
+    "stale-lead-reengagement": {
+        "task": "scheduled.stale_reengagement",
+        "schedule": crontab(hour=10, minute=0),
+    },
+    "followup-sequence-hourly": {
+        "task": "scheduled.followup_check",
+        "schedule": crontab(minute=0),
     },
 }

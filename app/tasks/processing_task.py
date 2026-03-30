@@ -113,6 +113,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
         phone = inbound.phone
         contact_id = inbound.contactId
         message = inbound.message
+        direction = inbound.direction
 
         if not phone and not contact_id:
             logger.warning("missing_identifiers", trace_id=trace_id)
@@ -154,8 +155,37 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             is_new=is_new_lead,
         )
 
+        # ── Stage 1.5: Language Detection ──
+        from app.services.language_detector import detect_language
+
+        detected_lang = "es"
+        if message and direction == "inbound":
+            try:
+                detected_lang = detect_language(message)
+                # Store detected language on Lead node
+                if contact_id:
+                    await lead_repo.save_qualification_data(
+                        contact_id, {"language": detected_lang}
+                    )
+                logger.info(
+                    "language_detected",
+                    trace_id=trace_id,
+                    language=detected_lang,
+                )
+            except Exception:
+                logger.exception("language_detection_failed", trace_id=trace_id)
+                detected_lang = (
+                    lead_data.get("language", "es") if lead_data else "es"
+                )
+        else:
+            # For outbound/proactive messages, use stored language from lead data
+            detected_lang = (
+                lead_data.get("language", "es") if lead_data else "es"
+            )
+
         # ── Stage 2: Human Agent Check ──
         conversation_ctx: dict = {}
+        is_human_active = False
         try:
             is_human_active, human_reason = await human_detector.is_human_active(
                 contact_id=contact_id,
@@ -173,6 +203,28 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
         except Exception:
             logger.exception("human_check_failed", trace_id=trace_id)
             # Fail-open: proceed without human check
+
+        # ── Stage 2.5: Human Re-Entry Check ──
+        human_reentry_ctx = {}
+        if not is_human_active and contact_id:
+            try:
+                from app.services.human_reentry import build_human_reentry_context
+
+                human_reentry_ctx = await build_human_reentry_context(
+                    contact_id=contact_id,
+                    conversation_id=inbound.conversationId,
+                    redis_client=_redis_client,
+                    claude_service=claude_service,
+                )
+                if human_reentry_ctx.get("had_human_interaction"):
+                    logger.info(
+                        "human_reentry_context_built",
+                        trace_id=trace_id,
+                        agent=human_reentry_ctx.get("agent_name"),
+                        messages=human_reentry_ctx.get("messages_during_lock"),
+                    )
+            except Exception:
+                logger.exception("human_reentry_check_failed", trace_id=trace_id)
 
         # ── Stage 3: Classification (if needed) ──
         classification = None
@@ -249,6 +301,12 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             "channel": inbound.channel,
             "is_new_lead": is_new_lead,
             "is_auto_trigger": inbound.isAutoTrigger,
+            "language": detected_lang,
+            "human_reentry": (
+                human_reentry_ctx
+                if human_reentry_ctx.get("had_human_interaction")
+                else None
+            ),
         }
 
         # ── Stage 6: Process (Claude call happens inside processor) ──

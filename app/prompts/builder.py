@@ -48,7 +48,14 @@ class PromptBuilder:
             FileNotFoundError: If the YAML template is not found.
             ValueError: If a required template variable is missing.
         """
-        template_path = f"{self.version}/{state.lower()}.yaml"
+        # Language variant selection: try {state}_{lang}.yaml, fallback to {state}.yaml
+        language = context.get("language", "es")
+        lang_template_path = f"{self.version}/{state.lower()}_{language}.yaml"
+        if (PROMPTS_DIR / lang_template_path).exists():
+            template_path = lang_template_path
+        else:
+            template_path = f"{self.version}/{state.lower()}.yaml"
+
         raw_yaml = self._load_yaml(template_path)
 
         # Validate frozen flag
@@ -64,6 +71,25 @@ class PromptBuilder:
         system_prompt = self._render_template(
             raw_yaml.get("system_prompt", ""), context, f"{state}.system_prompt"
         )
+
+        # Human re-entry injection: prepend context when AI resumes after human agent
+        if context.get("human_reentry") and context["human_reentry"].get(
+            "had_human_interaction"
+        ):
+            try:
+                reentry_yaml = self._load_yaml("v1/human_reentry.yaml")
+                reentry_key = "content_en" if language == "en" else "content_es"
+                reentry_text = self._render_template(
+                    reentry_yaml.get(reentry_key, ""),
+                    context.get("human_reentry", {}),
+                    "human_reentry",
+                )
+                system_prompt = reentry_text + "\n\n" + system_prompt
+            except Exception:
+                logger.exception(
+                    "prompt.human_reentry_injection_failed", state=state
+                )
+
         user_message = self._render_template(
             raw_yaml.get("user_template", ""), context, f"{state}.user_template"
         )

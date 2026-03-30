@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # Optional
     SLACK_WEBHOOK_URL: str = ""
 
+    # Canary mode (Phase 17)
+    CANARY_TAG: str = "v3-canary"
+    CANARY_ENABLED: bool = False  # Set to True to activate canary routing
+
     # Derived Redis URLs for different databases
     @property
     def redis_broker_url(self) -> str:
