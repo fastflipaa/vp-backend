@@ -17,6 +17,7 @@ from app.gates.base import GateDecision, GateResult
 logger = structlog.get_logger()
 
 HUMAN_LOCK_TTL_SECONDS = 86400  # 24 hours
+HUMAN_LOCK_HISTORY_TTL_SECONDS = 172800  # 48 hours -- outlives lock for re-entry context
 
 # Trigger word patterns that release the human lock (case-insensitive)
 # Supports both English and Spanish trigger phrases
@@ -119,11 +120,17 @@ def set_human_lock(
     """
     key = f"human_lock:{contact_id}"
     redis_client.set(key, agent_info, ex=HUMAN_LOCK_TTL_SECONDS)
+
+    # Persist lock history for human re-entry context (48h TTL outlives 24h lock)
+    history_key = f"human_lock_history:{contact_id}"
+    redis_client.set(history_key, agent_info, ex=HUMAN_LOCK_HISTORY_TTL_SECONDS)
+
     logger.info(
         "human_lock_set",
         contact_id=contact_id,
         agent_info=agent_info,
         ttl_seconds=HUMAN_LOCK_TTL_SECONDS,
+        history_ttl_seconds=HUMAN_LOCK_HISTORY_TTL_SECONDS,
     )
     return True
 

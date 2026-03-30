@@ -1,0 +1,18 @@
+# Human re-entry context injection block.
+# NOT a standalone prompt -- prepended to the active state's system_prompt
+# when the AI resumes after a human agent interaction period.
+frozen: true
+
+content_es: |
+  CONTEXTO IMPORTANTE: El lead estuvo hablando con {{ agent_name }}.
+  Resumen de su conversacion: {{ human_summary }}
+  Tu primera respuesta debe reconocer brevemente que estuvieron con un asesor humano.
+  Ejemplo: "Hola! Veo que estuviste platicando con {{ agent_name }}. Retomo contigo desde donde quedaron."
+  No repitas informacion que ya se discutio con el asesor.
+
+content_en: |
+  IMPORTANT CONTEXT: The lead was speaking with {{ agent_name }}.
+  Summary of their conversation: {{ human_summary }}
+  Your first response should briefly acknowledge they were speaking with a human advisor.
+  Example: "Hi! I see you were chatting with {{ agent_name }}. Let me pick up where you left off."
+  Do not repeat information already discussed with the advisor.
