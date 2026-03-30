@@ -46,27 +46,13 @@ def configure_logging(
     else:
         renderer = structlog.dev.ConsoleRenderer()
 
-    structlog.configure(
-        processors=[
-            *shared_processors,
-            structlog.processors.format_exc_info,
-            structlog.processors.dict_tracebacks,
-            renderer,
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
-        cache_logger_on_first_use=True,
-    )
-
-    # Configure stdlib logging (captures Celery/uvicorn logs)
+    # Configure stdlib logging FIRST (structlog routes through it)
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
 
     # Stdout handler (Coolify viewer)
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setLevel(logging.INFO)
-    stdout_handler.setFormatter(logging.Formatter("%(message)s"))
 
     # File handler (persistent history)
     file_handler = logging.FileHandler(
@@ -74,9 +60,30 @@ def configure_logging(
         encoding="utf-8",
     )
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter("%(message)s"))
+
+    # Both handlers use structlog's ProcessorFormatter for consistent JSON output
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processor=renderer,
+        foreign_pre_chain=shared_processors,
+    )
+    stdout_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
 
     # Clear existing handlers and add ours
     root_logger.handlers.clear()
     root_logger.addHandler(stdout_handler)
     root_logger.addHandler(file_handler)
+
+    # Configure structlog to route through stdlib (reaches both handlers)
+    structlog.configure(
+        processors=[
+            *shared_processors,
+            structlog.processors.format_exc_info,
+            structlog.processors.dict_tracebacks,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
