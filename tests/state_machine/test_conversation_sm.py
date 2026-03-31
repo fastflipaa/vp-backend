@@ -137,10 +137,10 @@ class TestGuardFailures:
     """Guards that return False prevent transitions."""
 
     def test_advance_greeting_without_name(self):
-        """GREETING->QUALIFYING requires lead_name AND interested."""
+        """GREETING->QUALIFYING succeeds with interested=True even without name."""
         sm = _make_sm("GREETING")
-        with pytest.raises(TransitionNotAllowed):
-            sm.send("advance", lead_name="", interested=True)
+        sm.send("advance", lead_name="", interested=True)
+        assert sm.model.state == "QUALIFYING"
 
     def test_advance_greeting_without_interest(self):
         """GREETING->QUALIFYING requires interested=True."""

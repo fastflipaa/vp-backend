@@ -117,8 +117,8 @@ class ConversationSM(StateMachine):
     # --- Guard conditions ---
 
     def has_name_and_interest(self, lead_name: str = "", interested: bool = False, **kwargs) -> bool:
-        """Lead provided their name and expressed interest in a property."""
-        return bool(lead_name) and bool(interested)
+        """Lead expressed interest in a property (name is optional for transition)."""
+        return bool(interested)
 
     def is_qualified(self, budget: float = 0, timeline: str = "", **kwargs) -> bool:
         """Lead has provided budget and timeline -- qualification complete."""
