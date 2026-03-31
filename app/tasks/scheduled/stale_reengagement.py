@@ -88,84 +88,87 @@ def stale_reengagement() -> dict:
     """
 
     async def _run() -> dict:
-        from app.repositories.base import get_driver
+        from app.repositories.base import close_driver, get_driver
         from app.repositories.lead_repository import LeadRepository
         from app.tasks.processing_task import process_message
 
-        driver = await get_driver()
-        lead_repo = LeadRepository(driver)
+        try:
+            driver = await get_driver()
+            lead_repo = LeadRepository(driver)
 
-        tier_counts = {}
-        total_sent = 0
+            tier_counts = {}
+            total_sent = 0
 
-        for tier_name, tier_config in TIERS.items():
-            # Query Neo4j for stale leads in this tier
-            stale_leads = await lead_repo.find_stale_leads(
-                min_inactive_days=tier_config["min_days"],
-                max_inactive_days=tier_config["max_days"],
-                states=tier_config["states"],
-                limit=tier_config["limit"],
-            )
-
-            if not stale_leads:
-                logger.info(
-                    "stale_reengagement.tier_empty",
-                    tier=tier_name,
-                )
-                tier_counts[tier_name] = 0
-                continue
-
-            tier_sent = 0
-
-            for lead in stale_leads:
-                contact_id = lead["contact_id"]
-                phone = lead["phone"]
-                name = lead.get("name", "")
-
-                trace_id = str(uuid.uuid4())
-
-                # Build synthetic payload for process_message
-                synthetic_payload = {
-                    "contactId": contact_id,
-                    "phone": phone,
-                    "message": "",
-                    "direction": "outbound",
-                    "messageType": f"reengagement_{tier_name.lower()}",
-                    "isAutoTrigger": True,
-                    "tags": [],
-                    "leadName": name,
-                }
-
-                # Route through full processing pipeline
-                process_message.delay(synthetic_payload, trace_id)
-                tier_sent += 1
-
-                logger.info(
-                    "stale_reengagement.lead_queued",
-                    tier=tier_name,
-                    contact_id=contact_id,
-                    trace_id=trace_id,
+            for tier_name, tier_config in TIERS.items():
+                # Query Neo4j for stale leads in this tier
+                stale_leads = await lead_repo.find_stale_leads(
+                    min_inactive_days=tier_config["min_days"],
+                    max_inactive_days=tier_config["max_days"],
+                    states=tier_config["states"],
+                    limit=tier_config["limit"],
                 )
 
-                # 5-second delay between leads to avoid burst spam
-                if tier_sent < len(stale_leads):
-                    await asyncio.sleep(5)
+                if not stale_leads:
+                    logger.info(
+                        "stale_reengagement.tier_empty",
+                        tier=tier_name,
+                    )
+                    tier_counts[tier_name] = 0
+                    continue
 
-            tier_counts[tier_name] = tier_sent
-            total_sent += tier_sent
+                tier_sent = 0
+
+                for lead in stale_leads:
+                    contact_id = lead["contact_id"]
+                    phone = lead["phone"]
+                    name = lead.get("name", "")
+
+                    trace_id = str(uuid.uuid4())
+
+                    # Build synthetic payload for process_message
+                    synthetic_payload = {
+                        "contactId": contact_id,
+                        "phone": phone,
+                        "message": "",
+                        "direction": "outbound",
+                        "messageType": f"reengagement_{tier_name.lower()}",
+                        "isAutoTrigger": True,
+                        "tags": [],
+                        "leadName": name,
+                    }
+
+                    # Route through full processing pipeline
+                    process_message.delay(synthetic_payload, trace_id)
+                    tier_sent += 1
+
+                    logger.info(
+                        "stale_reengagement.lead_queued",
+                        tier=tier_name,
+                        contact_id=contact_id,
+                        trace_id=trace_id,
+                    )
+
+                    # 5-second delay between leads to avoid burst spam
+                    if tier_sent < len(stale_leads):
+                        await asyncio.sleep(5)
+
+                tier_counts[tier_name] = tier_sent
+                total_sent += tier_sent
+
+                logger.info(
+                    "stale_reengagement.tier_complete",
+                    tier=tier_name,
+                    sent=tier_sent,
+                )
 
             logger.info(
-                "stale_reengagement.tier_complete",
-                tier=tier_name,
-                sent=tier_sent,
+                "stale_reengagement.complete",
+                tier_counts=tier_counts,
+                total_sent=total_sent,
             )
 
-        logger.info(
-            "stale_reengagement.complete",
-            tier_counts=tier_counts,
-            total_sent=total_sent,
-        )
-
-        return {"tier_counts": tier_counts, "total_sent": total_sent}
+            return {"tier_counts": tier_counts, "total_sent": total_sent}
+        finally:
+            await close_driver()
 
     return asyncio.run(_run())
