@@ -120,6 +120,23 @@ class PromptBuilder:
         template_path = f"{self.version}/{state.lower()}.yaml"
         return self._load_yaml(template_path)
 
+    def get_version(self, state: str) -> str | None:
+        """Return the version string from a state's YAML config.
+
+        Used for prompt versioning -- every Interaction node in Neo4j
+        carries the prompt version that generated it, enabling A/B
+        comparison queries.
+
+        Returns:
+            Version string (e.g. "1.0") or None if the YAML has no
+            version field.
+        """
+        try:
+            config = self.get_config(state)
+            return config.get("version")
+        except FileNotFoundError:
+            return None
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

@@ -59,6 +59,7 @@ class ResponseDeliveryService:
         conversation_repo: ConversationRepository | None = None,
         lead_phone: str = "",
         lead_email: str = "",
+        prompt_version: str | None = None,
     ) -> dict:
         """Full delivery pipeline: clean -> format -> send -> log.
 
@@ -72,6 +73,7 @@ class ResponseDeliveryService:
             conversation_repo: Neo4j conversation repository (optional).
             lead_phone: Lead's phone for PII filter (defaults to phone).
             lead_email: Lead's email for PII filter.
+            prompt_version: Prompt YAML version for A/B tracking on Interaction nodes.
 
         Returns:
             Dict with delivery status and metadata.
@@ -131,9 +133,10 @@ class ResponseDeliveryService:
                         phone, "user", inbound_message, channel, trace_id
                     )
 
-                # Log assistant interaction
+                # Log assistant interaction (with prompt version for A/B tracking)
                 await conversation_repo.log_interaction(
-                    phone, "assistant", cleaned, channel, trace_id
+                    phone, "assistant", cleaned, channel, trace_id,
+                    prompt_version=prompt_version,
                 )
 
                 # Log trace
@@ -171,6 +174,7 @@ class ResponseDeliveryService:
         channel: str,
         trace_id: str,
         conversation_repo: ConversationRepository | None = None,
+        prompt_version: str | None = None,
     ) -> dict:
         """Send fallback message when Claude circuit is open.
 
@@ -181,6 +185,7 @@ class ResponseDeliveryService:
             channel: Delivery channel.
             trace_id: Pipeline trace ID.
             conversation_repo: Neo4j conversation repository (optional).
+            prompt_version: Prompt YAML version for A/B tracking on Interaction nodes.
 
         Returns:
             Dict with fallback delivery status.
@@ -210,6 +215,7 @@ class ResponseDeliveryService:
                     f"[FALLBACK] {fallback_text}",
                     channel,
                     trace_id,
+                    prompt_version=prompt_version,
                 )
             except Exception as e:
                 logger.warning(

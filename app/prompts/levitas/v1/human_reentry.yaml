@@ -1,6 +1,7 @@
 # Human re-entry context injection block.
 # NOT a standalone prompt -- prepended to the active state's system_prompt
 # when the AI resumes after a human agent interaction period.
+version: "1.0"
 frozen: true
 
 content_es: |

@@ -271,6 +271,16 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             logger.exception("enrichment_failed", trace_id=trace_id)
             # Fail-open: proceed without enrichment
 
+        # ── Stage 4.5: Resolve Prompt Version ──
+        prompt_version = prompt_builder.get_version(current_state.lower())
+        if prompt_version:
+            logger.debug(
+                "prompt_version_resolved",
+                trace_id=trace_id,
+                state=current_state,
+                prompt_version=prompt_version,
+            )
+
         # ── Stage 5: Route to Processor ──
         processor_class = processor_router.get_processor(current_state)
         if processor_class is None:
@@ -331,6 +341,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 channel=inbound.channel,
                 trace_id=trace_id,
                 conversation_repo=conv_repo,
+                prompt_version=prompt_version,
             )
             return {"status": "fallback_sent", "reason": "claude_circuit_open"}
         except Exception:
@@ -347,6 +358,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 channel=inbound.channel,
                 trace_id=trace_id,
                 conversation_repo=conv_repo,
+                prompt_version=prompt_version,
             )
             return {"status": "fallback_sent", "reason": "processor_error"}
 
@@ -359,6 +371,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 channel=inbound.channel,
                 trace_id=trace_id,
                 conversation_repo=conv_repo,
+                prompt_version=prompt_version,
             )
             return {"status": "fallback_sent", "reason": "processor_fallback"}
 
@@ -413,6 +426,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                     conversation_repo=conv_repo,
                     lead_phone=phone,
                     lead_email=lead_data.get("email", ""),
+                    prompt_version=prompt_version,
                 )
             except Exception:
                 logger.exception("delivery_failed", trace_id=trace_id)

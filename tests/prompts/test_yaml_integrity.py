@@ -125,17 +125,15 @@ class TestV1YamlIntegrity:
         )
 
     def test_human_reentry_structure(self):
-        """human_reentry.yaml has content_es and content_en (no version field)."""
+        """human_reentry.yaml has content_es, content_en, and version field."""
         path = V1_DIR / "human_reentry.yaml"
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert "content_es" in data, "human_reentry.yaml missing content_es"
         assert "content_en" in data, "human_reentry.yaml missing content_en"
-        # Document: human_reentry is the only v1 file without a version field
-        # Plan 18-03 may add it. Test documents the current state.
-        assert "version" not in data, (
-            "human_reentry.yaml now has version field -- update this test"
-        )
+        # Plan 18-03 standardized: all v1 YAMLs now have version field
+        assert "version" in data, "human_reentry.yaml missing version field"
+        assert data["version"] == "1.0"
 
 
 class TestFallbackYaml:

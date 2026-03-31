@@ -29,6 +29,7 @@ class ProcessorResult:
     metadata: dict = field(default_factory=dict)
     should_handoff: bool = False
     sub_state_update: dict | None = None
+    prompt_version: str | None = None
 
 
 class BaseProcessor(ABC):
