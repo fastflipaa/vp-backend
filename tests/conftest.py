@@ -1,9 +1,9 @@
 """Root test configuration -- env vars, fakeredis fixtures, payload factories.
 
-CRITICAL: The ``set_test_env`` fixture is session-scoped and autouse. It sets
-all required env vars via ``os.environ.setdefault()`` BEFORE any ``app.*``
-module is imported, preventing the ``Settings`` singleton from crashing on
-missing environment variables.
+CRITICAL: Environment variables are set in ``pytest_configure()`` (a pytest
+hook that runs BEFORE test collection). This prevents the ``Settings``
+singleton from crashing when test modules import ``app.config.settings``
+at collection time.
 """
 
 from __future__ import annotations
@@ -16,16 +16,16 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Environment -- MUST run before any app import
+# Environment -- MUST run BEFORE collection (not inside a fixture)
 # ---------------------------------------------------------------------------
 
+def pytest_configure(config):
+    """Set all required env vars before any app module is imported.
 
-@pytest.fixture(scope="session", autouse=True)
-def set_test_env():
-    """Populate all required environment variables for the Settings singleton.
-
-    Uses ``setdefault`` so a real env var (e.g., in CI) is never overwritten.
-    Every field that has NO default in ``app.config.Settings`` must appear here.
+    ``pytest_configure`` runs before test collection, which is when
+    ``from app.gates.injection import check_injection`` triggers
+    ``from app.config import settings`` -> ``Settings()`` instantiation.
+    Uses ``setdefault`` so real env vars (e.g., in CI) are never overwritten.
     """
     defaults = {
         "ANTHROPIC_API_KEY": "test-key-not-real",
