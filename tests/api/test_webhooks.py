@@ -81,14 +81,19 @@ class TestInboundWebhook:
         assert "trace_id" in body
 
     def test_inbound_webhook_enqueues_task(self, inbound_client, valid_payload):
-        """POST valid payload enqueues Celery gate task."""
+        """POST valid payload enqueues Celery gate task with normalized payload."""
         response = inbound_client.post("/webhooks/inbound", json=valid_payload)
 
         assert response.status_code == 200
         # Verify Celery task was called
         inbound_client._mock_task.delay.assert_called_once()
         call_args = inbound_client._mock_task.delay.call_args
-        assert call_args[0][0] == valid_payload  # First arg is payload
+        enqueued = call_args[0][0]
+        # Normalized payload preserves original fields
+        assert enqueued["contactId"] == valid_payload["contactId"]
+        assert enqueued["message"] == valid_payload["message"]
+        assert enqueued["channel"] == valid_payload["channel"]
+        assert enqueued["phone"] == "+5215512345678"
         # Second arg is trace_id (UUID string)
         trace_id = call_args[0][1]
         assert re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", trace_id)
