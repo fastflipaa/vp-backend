@@ -17,8 +17,8 @@
 
 | Workflow | ID | Status |
 |----------|----|--------|
-| Old Main Router | _(fill after Task 3)_ | INACTIVE |
-| Simplified Forwarder | _(fill after Task 3)_ | ACTIVE |
+| Old Main Router | `M4Q1cbWwc9QZfLJM` | INACTIVE |
+| Simplified Forwarder | `bJjQCpCnBe2EtDrt` | ACTIVE |
 | FastAPI Webhook | `POST /webhooks/inbound` | RUNNING |
 
 ---
@@ -52,13 +52,13 @@
 2. Verify the old 89-node Main Router is deactivated:
    ```bash
    source "MCP_ENV" && curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" \
-     "https://n8n.fastflipai.cloud/api/v1/workflows/{MAIN_ROUTER_ID}" | python -c \
+     "https://n8n.fastflipai.cloud/api/v1/workflows/M4Q1cbWwc9QZfLJM" | python -c \
      "import sys,json; w=json.load(sys.stdin); print(f'Main Router: active={w[\"active\"]}')"
    ```
 3. Verify the new forwarder is active:
    ```bash
    source "MCP_ENV" && curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" \
-     "https://n8n.fastflipai.cloud/api/v1/workflows/{FORWARDER_ID}" | python -c \
+     "https://n8n.fastflipai.cloud/api/v1/workflows/bJjQCpCnBe2EtDrt" | python -c \
      "import sys,json; w=json.load(sys.stdin); print(f'Forwarder: active={w[\"active\"]}')"
    ```
 4. Test: Send test message via GHL -> appears in FastAPI structured logs with trace_id
@@ -110,7 +110,7 @@
 1. Deactivate the simplified n8n forwarder workflow (keep for emergency rollback):
    ```bash
    source "MCP_ENV" && curl -s -X POST -H "X-N8N-API-KEY: $N8N_API_KEY" \
-     "https://n8n.fastflipai.cloud/api/v1/workflows/{FORWARDER_ID}/deactivate"
+     "https://n8n.fastflipai.cloud/api/v1/workflows/bJjQCpCnBe2EtDrt/deactivate"
    ```
 2. Optional cleanup (can be done later):
    - Remove `_run_shadow_comparison()` call from `gate_tasks.process_gates_shadow()`

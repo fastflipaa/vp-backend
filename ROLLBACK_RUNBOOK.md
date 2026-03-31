@@ -29,11 +29,11 @@ source "C:/Users/conta/Desktop/MCP Servers/n8n-mcp-agent/.env"
 
 # Activate the 89-node Main Router
 curl -s -X POST -H "X-N8N-API-KEY: $N8N_API_KEY" \
-  "https://n8n.fastflipai.cloud/api/v1/workflows/{MAIN_ROUTER_ID}/activate"
+  "https://n8n.fastflipai.cloud/api/v1/workflows/M4Q1cbWwc9QZfLJM/activate"
 
 # Deactivate the simplified forwarder
 curl -s -X POST -H "X-N8N-API-KEY: $N8N_API_KEY" \
-  "https://n8n.fastflipai.cloud/api/v1/workflows/{FORWARDER_ID}/deactivate"
+  "https://n8n.fastflipai.cloud/api/v1/workflows/bJjQCpCnBe2EtDrt/deactivate"
 ```
 
 Verify: Check n8n UI -- Main Router shows as active.
@@ -104,6 +104,6 @@ Verify: Check n8n UI -- Main Router shows as active.
 
 | Workflow | ID | Notes |
 |----------|----|-------|
-| Old Main Router | _(fill after Task 3)_ | 89 nodes, original n8n pipeline |
-| Simplified Forwarder | _(fill after Task 3)_ | 5-6 nodes, webhook -> FastAPI forward |
+| Old Main Router | `M4Q1cbWwc9QZfLJM` | 89 nodes, original n8n pipeline |
+| Simplified Forwarder | `bJjQCpCnBe2EtDrt` | 5 nodes, webhook -> FastAPI forward |
 | FastAPI Webhook | N/A | `POST /webhooks/inbound` on vp-api |
