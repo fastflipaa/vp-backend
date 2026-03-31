@@ -1,0 +1,16 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "asyncio: mark test as async",
+    "slow: marks tests requiring testcontainers (deselect with -m 'not slow')",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/__pycache__/*", "app/tasks/test_task.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
