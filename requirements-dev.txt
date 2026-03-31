@@ -4,3 +4,4 @@ pytest-cov>=6.0
 fakeredis>=2.0
 pytest-mock>=3.0
 freezegun>=1.0
+testcontainers>=4.0

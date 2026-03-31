@@ -29,6 +29,7 @@ class ConversationRepository:
         content: str,
         channel: str,
         trace_id: str,
+        prompt_version: str | None = None,
     ) -> None:
         """Log an interaction (inbound or assistant) linked to a Lead.
 
@@ -38,10 +39,11 @@ class ConversationRepository:
             content: Message text.
             channel: Delivery channel (e.g. ``"sms"``, ``"whatsapp"``).
             trace_id: Pipeline trace ID for correlation.
+            prompt_version: Optional prompt file version (e.g. ``"qualifying_es.yaml"``).
         """
         async with self._driver.session() as session:
             await session.execute_write(
-                self._log_interaction_tx, phone, role, content, channel, trace_id
+                self._log_interaction_tx, phone, role, content, channel, trace_id, prompt_version
             )
             logger.info(
                 "interaction_logged",
@@ -49,30 +51,55 @@ class ConversationRepository:
                 role=role,
                 channel=channel,
                 trace_id=trace_id,
+                prompt_version=prompt_version,
             )
 
     @staticmethod
     async def _log_interaction_tx(
-        tx, phone: str, role: str, content: str, channel: str, trace_id: str
+        tx, phone: str, role: str, content: str, channel: str, trace_id: str,
+        prompt_version: str | None = None,
     ) -> None:
-        await tx.run(
-            """
-            MATCH (l:Lead {phone: $phone})
-            CREATE (i:Interaction {
-                role: $role,
-                content: $content,
-                channel: $channel,
-                trace_id: $trace_id,
-                created_at: datetime()
-            })
-            MERGE (l)-[:HAS_INTERACTION]->(i)
-            """,
-            phone=phone,
-            role=role,
-            content=content,
-            channel=channel,
-            trace_id=trace_id,
-        )
+        # Build property map -- prompt_version is optional for backward compat
+        props = {
+            "phone": phone,
+            "role": role,
+            "content": content,
+            "channel": channel,
+            "trace_id": trace_id,
+        }
+        if prompt_version is not None:
+            # Include prompt_version in the Interaction node
+            await tx.run(
+                """
+                MATCH (l:Lead {phone: $phone})
+                CREATE (i:Interaction {
+                    role: $role,
+                    content: $content,
+                    channel: $channel,
+                    trace_id: $trace_id,
+                    prompt_version: $prompt_version,
+                    created_at: datetime()
+                })
+                MERGE (l)-[:HAS_INTERACTION]->(i)
+                """,
+                **props,
+                prompt_version=prompt_version,
+            )
+        else:
+            await tx.run(
+                """
+                MATCH (l:Lead {phone: $phone})
+                CREATE (i:Interaction {
+                    role: $role,
+                    content: $content,
+                    channel: $channel,
+                    trace_id: $trace_id,
+                    created_at: datetime()
+                })
+                MERGE (l)-[:HAS_INTERACTION]->(i)
+                """,
+                **props,
+            )
 
     # --- Interaction retrieval ---
 
