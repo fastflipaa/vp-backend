@@ -160,10 +160,8 @@ class TestInboundWebhook:
                     found_trace = True
                     break
 
-        # Whether or not caplog captured it (structlog routing can vary),
-        # the essential verification is that a valid UUID trace_id was generated
-        # and returned in the response.
-        assert returned_trace_id is not None
+        assert returned_trace_id is not None, "No trace_id returned in response"
+        assert found_trace, f"trace_id {returned_trace_id} not found in log output (ROADMAP SC-1)"
 
 
 # ---------------------------------------------------------------------------
