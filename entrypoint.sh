@@ -6,7 +6,7 @@ set -e
 
 case "${SERVICE_ROLE}" in
   worker)
-    exec celery -A app.celery_app worker --loglevel=info --without-heartbeat --without-gossip --without-mingle -Ofair
+    exec celery -A app.celery_app worker -Q celery,processing --loglevel=info --without-heartbeat --without-gossip --without-mingle -Ofair
     ;;
   beat)
     exec celery -A app.celery_app beat --loglevel=info
