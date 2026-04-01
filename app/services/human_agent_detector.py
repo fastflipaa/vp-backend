@@ -44,14 +44,26 @@ TRIGGER_WORDS = [
 BOT_SOURCES = {"bot", "system", "automation", "workflow", "api"}
 
 # Known building names for context extraction
+# Order matters: longer/more-specific names first to avoid partial matches
+# (e.g., "one park" before "one", "888 brickell" before "888")
 BUILDING_NAMES = [
+    "one park tower",
+    "one park",
+    "888 brickell",
+    "brickell",
+    "ritz-carlton",
+    "ritz carlton",
+    "ritz",
     "armani",
+    "park hyatt",
     "park",
-    "one",
+    "thompson",
     "oscar",
     "en-vogue",
     "the gallery",
     "glass",
+    "nobu",
+    "888",
 ]
 
 # Max consecutive outbound messages before spam limit triggers
