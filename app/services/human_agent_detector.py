@@ -22,7 +22,6 @@ Usage:
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta, timezone
 
 import structlog
@@ -132,18 +131,6 @@ class HumanAgentDetector:
         for msg in self._last_messages:
             msg_body = msg.get("body", "") or ""
             msg_body_lower = msg_body.lower()
-
-            # Check for trigger words (regardless of source or time)
-            for trigger in TRIGGER_WORDS:
-                if trigger in msg_body_lower:
-                    logger.info(
-                        "human_detector.trigger_word",
-                        contact_id=contact_id,
-                        trigger=trigger,
-                    )
-                    return True, "trigger_word"
-
-            # Check for non-bot source within time window
             msg_source = (msg.get("source", "") or "").lower()
             msg_direction = (msg.get("direction", "") or "").lower()
 
@@ -152,12 +139,24 @@ class HumanAgentDetector:
             if msg_date and msg_date < cutoff:
                 continue  # Outside the detection window
 
-            # Non-bot, non-inbound (i.e., outbound from a human) within window
+            # Only check outbound messages from non-bot sources (human agents)
             if (
                 msg_direction == "outbound"
                 and msg_source not in BOT_SOURCES
                 and msg_source != ""
             ):
+                # Check for trigger words in human agent messages
+                for trigger in TRIGGER_WORDS:
+                    if trigger in msg_body_lower:
+                        logger.info(
+                            "human_detector.trigger_word",
+                            contact_id=contact_id,
+                            trigger=trigger,
+                            source=msg_source,
+                        )
+                        return True, "trigger_word"
+
+                # Human agent sent a message within the window
                 logger.info(
                     "human_detector.agent_active",
                     contact_id=contact_id,
