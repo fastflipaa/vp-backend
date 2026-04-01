@@ -188,6 +188,68 @@ def _parse_claude_json(response_text: str) -> dict:
     return {}
 
 
+def _format_building_context(buildings: list[dict]) -> str:
+    """Format building data for Claude's context, respecting pricing_verified flag.
+
+    When pricing_verified is False or price data is 0/NULL, injects an explicit
+    instruction for Claude to defer pricing questions to Fernando/Lorena.
+    This prevents hallucination of prices — a legal liability risk.
+    """
+    if not buildings:
+        return ""
+
+    lines = []
+    for b in buildings:
+        name = b.get("name", "Unknown")
+        verified = b.get("pricing_verified", False)
+        price_min = b.get("price_min_usd") or 0
+        price_max = b.get("price_max_usd") or 0
+        has_real_pricing = verified and price_min > 0 and price_max > 0
+
+        lines.append(f"BUILDING: {name}")
+        lines.append(f"  City: {b.get('city', '?')}, {b.get('country', '?')}")
+        lines.append(f"  Status: {b.get('status', '?')}")
+
+        if has_real_pricing:
+            lines.append(f"  Price Range: ${price_min:,.0f} - ${price_max:,.0f} USD (VERIFIED)")
+            if b.get("total_floors"):
+                lines.append(f"  Floors: {b['total_floors']}")
+            if b.get("total_units"):
+                lines.append(f"  Units: {b['total_units']}")
+            if b.get("views"):
+                lines.append(f"  Views: {b['views']}")
+            if b.get("key_features"):
+                lines.append(f"  Features: {b['key_features']}")
+            if b.get("completion_date"):
+                lines.append(f"  Completion: {b['completion_date']}")
+            # Include unit types if available
+            units = b.get("units", [])
+            if units:
+                for u in units:
+                    uname = u.get("name", "?")
+                    beds = u.get("bedrooms", "?")
+                    pf = u.get("price_from") or 0
+                    pt = u.get("price_to") or 0
+                    if pf > 0 and pt > 0:
+                        lines.append(f"    Unit: {uname} ({beds} bed) — ${pf:,.0f}-${pt:,.0f}")
+                    elif pf > 0:
+                        lines.append(f"    Unit: {uname} ({beds} bed) — from ${pf:,.0f}")
+                    else:
+                        lines.append(f"    Unit: {uname} ({beds} bed)")
+        else:
+            lines.append(
+                f"  PRICING: NOT VERIFIED — Tell the lead: "
+                f"\"Déjame consultar con Fernando los precios actualizados de {name}.\" "
+                f"Set next_action to \"handoff_fernando\" if they insist on pricing."
+            )
+            if b.get("description_es"):
+                lines.append(f"  Description: {b['description_es']}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 class QualifyingProcessor(BaseProcessor):
     """5-step qualification processor with auto-advance and escalation.
 
@@ -295,6 +357,19 @@ class QualifyingProcessor(BaseProcessor):
             for t in tags
         )
 
+        # Fetch building data with pricing_verified context
+        building_context = ""
+        phone = lead_data.get("phone", "")
+        if self._building_repo and phone:
+            try:
+                buildings = await self._building_repo.get_buildings_for_lead(phone)
+                if buildings:
+                    building_context = _format_building_context(buildings)
+            except Exception:
+                logger.exception(
+                    "qualifying.building_context_failed", trace_id=trace_id
+                )
+
         # Load qualifying YAML config
         raw_yaml = self._prompt_builder._load_yaml(
             f"{self._prompt_builder.version}/qualifying.yaml"
@@ -320,6 +395,7 @@ class QualifyingProcessor(BaseProcessor):
             "cadence": cadence,
             "known_items": known_items,
             "broker_aware": broker_aware,
+            "building_context": building_context,
             "ghl_conversation_context": conversation_context.get(
                 "ghlConversationContext", ""
             ),
@@ -523,11 +599,14 @@ class QualifyingProcessor(BaseProcessor):
         cadence = _detect_cadence(message)
         graphrag_context = ""
 
-        # Fetch GraphRAG data if building_repo available
+        # Fetch building data + GraphRAG recommendations
+        building_context = ""
         if self._building_repo and phone:
             try:
                 buildings = await self._building_repo.get_buildings_for_lead(phone)
                 if buildings:
+                    # Format building data with pricing_verified checks
+                    building_context = _format_building_context(buildings)
                     building_ids = [
                         b["building_id"] for b in buildings if b.get("building_id")
                     ]
@@ -578,6 +657,7 @@ class QualifyingProcessor(BaseProcessor):
             "message": message,
             "cadence": cadence,
             "graphrag_context": graphrag_context,
+            "building_context": building_context,
             "lead_preferences": lead_preferences,
             "qual_context": qual_context,
             "known_items": known_items,

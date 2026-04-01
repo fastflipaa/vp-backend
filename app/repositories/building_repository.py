@@ -61,6 +61,7 @@ class BuildingRepository:
                    b.country AS country,
                    b.price_min_usd AS price_min_usd,
                    b.price_max_usd AS price_max_usd,
+                   b.pricing_verified AS pricing_verified,
                    b.status AS status,
                    b.total_floors AS total_floors,
                    b.total_units AS total_units,
