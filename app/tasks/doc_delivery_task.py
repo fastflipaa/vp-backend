@@ -1,14 +1,17 @@
-"""Document delivery task -- sends R2-hosted PDF links to leads.
+"""Document delivery Celery task.
 
-When a lead asks for brochures, floor plans, or pricing, this task
-fetches the relevant documents from Neo4j and sends the download links
-via GHL message.
+Sends R2-hosted PDF links to a lead via GHL when they request brochures,
+floor plans, or pricing documents. Ports the Send Building Docs sub-workflow
+from n8n (Section 3.7 of the audit).
 
 Design decisions:
-- Fail-open: doc delivery failure should never block the conversation
-- Uses asyncio.run() -- safe in prefork Celery workers
-- Closes Neo4j driver in finally block to prevent event loop issues
-- Records sent documents in Neo4j to avoid duplicate sends
+- queue="processing": collocated with the main processing pipeline workers
+- max_retries=0: fail-open; a missed doc delivery is better than a stuck queue
+- asyncio.run() + close_driver() in finally: same pattern as health_check.py
+  to prevent "Future attached to a different loop" across Celery invocations
+- Fail-open on Neo4j: if doc lookup fails we send a polite fallback message
+- Fail-open on GHL: if send fails we log but do not crash the task
+- Deduplication: handled upstream via :SENT_DOCUMENT relationships in Neo4j
 """
 
 from __future__ import annotations
@@ -21,35 +24,26 @@ from app.celery_app import celery_app
 
 logger = structlog.get_logger()
 
+# Message templates (Spanish -- primary language for Vive Polanco leads)
+_MSG_DOCS_TEMPLATE = (
+    "Aquí te comparto la información de {building_name}:\n\n"
+    "{doc_lines}\n\n"
+    "¿Te gustaría agendar una visita o tienes alguna pregunta?"
+)
 
-def _format_doc_message(building_name: str, docs: list[dict], language: str = "es") -> str:
-    """Format document links into a user-friendly message."""
-    if language.startswith("en"):
-        header = f"Here's the information for {building_name}:"
-        footer = "Would you like to schedule a visit or do you have any questions?"
-    else:
-        header = f"Aqu\u00ed te comparto la informaci\u00f3n de {building_name}:"
-        footer = "\u00bfTe gustar\u00eda agendar una visita o tienes alguna pregunta?"
-
-    doc_lines = []
-    for doc in docs[:5]:  # Max 5 docs per message
-        name = doc.get("name", doc.get("type", "Documento"))
-        url = doc.get("r2_url", doc.get("url", ""))
-        if url:
-            doc_lines.append(f"\U0001f4c4 {name}: {url}")
-
-    if not doc_lines:
-        if language.startswith("en"):
-            return f"I'm looking for the documents for {building_name}. I'll send them as soon as they're available."
-        return f"Estoy buscando los documentos de {building_name}. Te los env\u00edo en cuanto est\u00e9n disponibles."
-
-    return f"{header}\n\n" + "\n".join(doc_lines) + f"\n\n{footer}"
+_MSG_NO_DOCS = (
+    "Muchas gracias por tu interés. En este momento no tenemos los "
+    "documentos disponibles digitalmente, pero con gusto te los "
+    "enviamos en breve. ¿Hay algún otro tema en que te podamos ayudar?"
+)
 
 
 @celery_app.task(
-    name="documents.deliver",
+    name="processing.deliver_documents",
     bind=True,
     max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=True,
     queue="processing",
 )
 def deliver_documents(
@@ -59,71 +53,141 @@ def deliver_documents(
     building_name: str,
     channel: str,
     trace_id: str,
-    language: str = "es",
 ) -> dict:
-    """Fetch unsent docs from Neo4j and send links via GHL."""
+    """Fetch unsent building documents from Neo4j and deliver links via GHL.
+
+    Args:
+        contact_id: GHL contact ID used for message delivery.
+        phone: Lead phone number used for Neo4j Lead lookup.
+        building_name: Building name as returned by Claude (case-insensitive match).
+        channel: GHL delivery channel (SMS, WhatsApp, etc.).
+        trace_id: Trace ID inherited from the originating process_message call.
+
+    Steps:
+        1. Query Neo4j for documents not yet sent to this lead.
+        2. If none found: send polite "not available" message.
+        3. If found: format and send PDF links via GHL.
+        4. Record :SENT_DOCUMENT relationships in Neo4j.
+    """
 
     async def _run() -> dict:
         from app.repositories.base import close_driver, get_driver
         from app.repositories.building_repository import BuildingRepository
         from app.services.ghl_service import send_message
 
+        driver = None
         try:
             driver = await get_driver()
             building_repo = BuildingRepository(driver)
 
-            # Try to find docs for this building
-            docs = []
+            # Step 1: Fetch unsent documents for this building + lead
             try:
-                docs = await building_repo.get_unsent_docs(contact_id, building_name)
+                docs = await building_repo.get_unsent_docs_by_name(
+                    phone=phone,
+                    building_name=building_name,
+                )
             except Exception:
                 logger.exception(
-                    "doc_delivery.neo4j_query_failed",
+                    "doc_delivery.neo4j_lookup_failed",
                     trace_id=trace_id,
-                    building=building_name,
+                    contact_id=contact_id,
+                    building_name=building_name,
                 )
+                # Fail-open: send fallback message
+                docs = []
 
-            # Format and send message
-            message = _format_doc_message(building_name, docs, language)
+            logger.info(
+                "doc_delivery.docs_found",
+                trace_id=trace_id,
+                contact_id=contact_id,
+                building_name=building_name,
+                count=len(docs),
+            )
 
-            try:
-                await send_message(contact_id, message, channel)
+            # Step 2 or 3: Compose message
+            if not docs:
+                message_text = _MSG_NO_DOCS
                 logger.info(
-                    "doc_delivery.sent",
+                    "doc_delivery.no_docs_available",
                     trace_id=trace_id,
-                    contact_id=contact_id,
-                    building=building_name,
-                    doc_count=len(docs),
+                    building_name=building_name,
                 )
-            except Exception:
-                logger.exception(
-                    "doc_delivery.send_failed",
-                    trace_id=trace_id,
-                    contact_id=contact_id,
+            else:
+                doc_lines = "\n".join(
+                    f"📄 {doc.get('name', 'Documento')}: {doc.get('url', '')}"
+                    for doc in docs
+                    if doc.get("url")
                 )
-                return {"status": "send_failed"}
-
-            # Record sent docs in Neo4j (non-critical)
-            if docs:
-                try:
-                    await building_repo.record_discussed(contact_id, building_name)
-                except Exception:
-                    logger.warning(
-                        "doc_delivery.record_failed",
-                        trace_id=trace_id,
+                if not doc_lines:
+                    # All docs had empty URLs -- treat as unavailable
+                    message_text = _MSG_NO_DOCS
+                    docs = []
+                else:
+                    message_text = _MSG_DOCS_TEMPLATE.format(
+                        building_name=building_name,
+                        doc_lines=doc_lines,
                     )
 
-            return {"status": "delivered", "doc_count": len(docs)}
+            # Send via GHL
+            try:
+                await send_message(
+                    contact_id=contact_id,
+                    message=message_text,
+                    channel=channel,
+                )
+                logger.info(
+                    "doc_delivery.message_sent",
+                    trace_id=trace_id,
+                    contact_id=contact_id,
+                    channel=channel,
+                )
+            except Exception:
+                logger.exception(
+                    "doc_delivery.ghl_send_failed",
+                    trace_id=trace_id,
+                    contact_id=contact_id,
+                    channel=channel,
+                )
+                # Fail-open: log and return; don't mark docs as sent
+                return {
+                    "status": "ghl_send_failed",
+                    "trace_id": trace_id,
+                    "docs_found": len(docs),
+                }
+
+            # Step 4: Record sent documents in Neo4j (only if GHL succeeded)
+            if docs:
+                sent_urls = [d["url"] for d in docs if d.get("url")]
+                try:
+                    await building_repo.record_sent_docs(
+                        phone=phone,
+                        doc_urls=sent_urls,
+                    )
+                    logger.info(
+                        "doc_delivery.sent_docs_recorded",
+                        trace_id=trace_id,
+                        phone=phone[-4:] if phone else "",
+                        count=len(sent_urls),
+                    )
+                except Exception:
+                    logger.exception(
+                        "doc_delivery.record_sent_failed",
+                        trace_id=trace_id,
+                        phone=phone[-4:] if phone else "",
+                    )
+                    # Non-fatal: docs were delivered; Neo4j write is best-effort
+
+            return {
+                "status": "delivered" if docs else "no_docs",
+                "trace_id": trace_id,
+                "building_name": building_name,
+                "docs_sent": len(docs),
+            }
+
         finally:
+            # Always close the driver so the next asyncio.run() gets a fresh
+            # driver bound to its own event loop (prevents "Future attached to
+            # a different loop" errors in Celery prefork workers).
             await close_driver()
 
-    try:
-        return asyncio.run(_run())
-    except Exception:
-        logger.exception(
-            "doc_delivery.task_failed",
-            trace_id=trace_id,
-            contact_id=contact_id,
-            building=building_name,
-        )
-        return {"status": "error"}
+    return asyncio.run(_run())

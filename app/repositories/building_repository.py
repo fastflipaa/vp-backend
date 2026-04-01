@@ -151,6 +151,79 @@ class BuildingRepository:
         )
         return [dict(r) async for r in result]
 
+    async def get_unsent_docs_by_name(
+        self, phone: str, building_name: str
+    ) -> list[dict[str, Any]]:
+        """Find unsent documents for a building looked up by name.
+
+        Variant of get_unsent_docs that resolves building by name instead
+        of building_id. Used by the doc delivery task which receives a
+        building name from the Claude qualifying response.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_unsent_docs_by_name_tx, phone, building_name
+            )
+            logger.debug(
+                "unsent_docs_by_name_found",
+                phone=phone[-4:],
+                building_name=building_name,
+                count=len(result),
+            )
+            return result
+
+    @staticmethod
+    async def _get_unsent_docs_by_name_tx(
+        tx, phone: str, building_name: str
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (b:Building)-[:HAS_DOCUMENT]->(d:Document)
+            WHERE toLower(b.name) = toLower($bname)
+            AND NOT EXISTS {
+                MATCH (l:Lead {phone: $phone})-[:SENT_DOCUMENT]->(d)
+            }
+            RETURN d.name AS name, d.url AS url, d.type AS type, b.building_id AS building_id
+            """,
+            bname=building_name,
+            phone=phone,
+        )
+        return [dict(r) async for r in result]
+
+    async def record_sent_docs(
+        self, phone: str, doc_urls: list[str]
+    ) -> None:
+        """Create :SENT_DOCUMENT relationships between Lead and Documents.
+
+        Uses doc url as the lookup key since building_id is not always
+        available at delivery time.
+        """
+        if not doc_urls:
+            return
+        async with self._driver.session() as session:
+            await session.execute_write(
+                self._record_sent_docs_tx, phone, doc_urls
+            )
+            logger.info(
+                "sent_docs_recorded",
+                phone=phone[-4:],
+                count=len(doc_urls),
+            )
+
+    @staticmethod
+    async def _record_sent_docs_tx(
+        tx, phone: str, doc_urls: list[str]
+    ) -> None:
+        await tx.run(
+            """
+            MATCH (l:Lead {phone: $phone})
+            MATCH (d:Document) WHERE d.url IN $urls
+            MERGE (l)-[:SENT_DOCUMENT]->(d)
+            """,
+            phone=phone,
+            urls=doc_urls,
+        )
+
     # --- Discussion tracking ---
 
     async def record_discussed(self, phone: str, building_id: str) -> None:

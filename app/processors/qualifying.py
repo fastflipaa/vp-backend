@@ -74,6 +74,30 @@ ESCALATION_KEYWORDS = [
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 
+def _enqueue_doc_delivery(
+    contact_id: str,
+    phone: str,
+    building_name: str,
+    channel: str,
+    trace_id: str,
+) -> None:
+    """Fire-and-forget: enqueue a doc delivery task for this lead.
+
+    Import is deferred to avoid circular imports at module load time.
+    Logs a warning and continues if enqueueing fails (fail-open).
+    """
+    try:
+        from app.tasks.doc_delivery_task import deliver_documents
+        deliver_documents.delay(contact_id, phone, building_name, channel, trace_id)
+    except Exception:
+        logger.exception(
+            "qualifying.doc_delivery_enqueue_failed",
+            trace_id=trace_id,
+            contact_id=contact_id,
+            building_name=building_name,
+        )
+
+
 def _detect_cadence(message: str) -> str:
     """Detect lead cadence from message patterns.
 
@@ -385,6 +409,23 @@ class QualifyingProcessor(BaseProcessor):
                 new_state="SCHEDULING",
                 metadata={"appointment_requested": True},
             )
+        if next_action == "send_docs":
+            building_name = (
+                parsed.get("building_name")
+                or conversation_context.get("mostRecentBuilding", "")
+            )
+            _enqueue_doc_delivery(
+                contact_id=contact_id,
+                phone=phone,
+                building_name=building_name,
+                channel=lead_data.get("channel", "SMS"),
+                trace_id=trace_id,
+            )
+            logger.info(
+                "qualifying.doc_delivery_enqueued",
+                trace_id=trace_id,
+                building_name=building_name,
+            )
 
         # Build qualification data update
         qual_update = {"sub_state": self._next_sub_state(sub_state)}
@@ -616,6 +657,23 @@ class QualifyingProcessor(BaseProcessor):
                 response_text=response_msg,
                 new_state="SCHEDULING",
                 metadata={"appointment_requested": True},
+            )
+        if next_action == "send_docs":
+            building_name = (
+                parsed.get("building_name")
+                or conversation_context.get("mostRecentBuilding", "")
+            )
+            _enqueue_doc_delivery(
+                contact_id=contact_id,
+                phone=phone,
+                building_name=building_name,
+                channel=lead_data.get("channel", "SMS"),
+                trace_id=trace_id,
+            )
+            logger.info(
+                "qualifying.building_match.doc_delivery_enqueued",
+                trace_id=trace_id,
+                building_name=building_name,
             )
 
         # Record discussed building
