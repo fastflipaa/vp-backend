@@ -41,7 +41,7 @@ async def _create_lead_with_buildings(
                 """
                 MERGE (b:Building {building_id: $bid})
                 SET b.name = 'Tower ' + $bid,
-                    b.location = 'Polanco',
+                    b.neighborhood = 'Polanco',
                     b.price_min_usd = 5000000,
                     b.price_max_usd = 10000000,
                     b.city = 'CDMX',
