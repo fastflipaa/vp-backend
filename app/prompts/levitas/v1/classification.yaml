@@ -1,7 +1,7 @@
 version: "1.0"
 state: "CLASSIFICATION"
 frozen: true
-model: "claude-3-5-haiku-20241022"
+model: "claude-haiku-4-5-20251001"
 max_tokens: 100
 
 # Fast-path bypass: For leads already deep in qualifying, the handler returns

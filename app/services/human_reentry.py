@@ -92,7 +92,7 @@ async def build_human_reentry_context(
                         "Focus on what was discussed and any commitments made."
                     ),
                     user_message=conversation_text,
-                    model="claude-haiku-4-20250514",
+                    model="claude-haiku-4-5-20251001",
                     max_tokens=256,
                 )
             except Exception:
