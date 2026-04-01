@@ -89,7 +89,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
         # Import all dependencies inside the task to avoid circular imports
         from app.api.schemas import InboundPayload
         from app.processors.base import ProcessorResult
-        from app.repositories.base import get_driver
+        from app.repositories.base import close_driver, get_driver
         from app.repositories.building_repository import BuildingRepository
         from app.repositories.conversation_repository import ConversationRepository
         from app.repositories.lead_repository import LeadRepository
@@ -497,6 +497,21 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             "duration_ms": round(duration_ms, 2),
         }
 
+    async def _run_with_cleanup():
+        """Wrapper that ensures Neo4j driver is closed after each task.
+
+        Without this, the cached driver's connections stay bound to the
+        event loop created by this asyncio.run(). The NEXT task's
+        asyncio.run() creates a new loop, but the old driver connections
+        are still bound to the dead loop → "Future attached to a different
+        loop" error on every subsequent message in the same worker process.
+        """
+        try:
+            return await _run()
+        finally:
+            from app.repositories.base import close_driver
+            await close_driver()
+
     # Run the async pipeline in asyncio
     # Safe in prefork Celery workers (no existing event loop)
-    return asyncio.run(_run())
+    return asyncio.run(_run_with_cleanup())
