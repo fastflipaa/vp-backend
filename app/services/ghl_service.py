@@ -246,3 +246,75 @@ async def update_contact(contact_id: str, data: dict) -> dict:
     response.raise_for_status()
     logger.info("ghl.update_contact", contact_id=contact_id)
     return response.json()
+
+
+# --- Pipeline / Opportunity methods ---
+
+
+@_retry_decorator
+async def _search_opportunity(pipeline_id: str, contact_id: str) -> str | None:
+    """Return the first opportunity ID for the contact in the given pipeline."""
+    client = get_ghl_client()
+    response = await client.get(
+        "/opportunities/search",
+        params={"pipelineId": pipeline_id, "contactId": contact_id},
+    )
+    response.raise_for_status()
+    data = response.json()
+    opportunities = data.get("opportunities", [])
+    if opportunities:
+        opp_id = opportunities[0].get("id")
+        logger.debug("ghl.opportunity_found", contact_id=contact_id, opportunity_id=opp_id)
+        return opp_id
+    logger.debug("ghl.opportunity_not_found", contact_id=contact_id)
+    return None
+
+
+@_retry_decorator
+async def _create_opportunity(
+    pipeline_id: str, stage_id: str, contact_id: str, location_id: str
+) -> str:
+    """Create a new opportunity in GHL and return its ID."""
+    client = get_ghl_client()
+    response = await client.post(
+        "/opportunities/",
+        json={
+            "pipelineId": pipeline_id,
+            "pipelineStageId": stage_id,
+            "contactId": contact_id,
+            "name": "AI Lead",
+            "locationId": location_id,
+        },
+    )
+    response.raise_for_status()
+    data = response.json()
+    opp = data.get("opportunity", data)
+    opp_id = opp.get("id", "")
+    logger.info("ghl.opportunity_created", contact_id=contact_id, opportunity_id=opp_id, stage_id=stage_id)
+    return opp_id
+
+
+@_retry_decorator
+async def _move_opportunity_stage(opportunity_id: str, stage_id: str) -> None:
+    """Move an existing opportunity to a new pipeline stage."""
+    client = get_ghl_client()
+    response = await client.put(
+        f"/opportunities/{opportunity_id}",
+        json={"pipelineStageId": stage_id},
+    )
+    response.raise_for_status()
+    logger.info("ghl.opportunity_stage_updated", opportunity_id=opportunity_id, stage_id=stage_id)
+
+
+async def update_opportunity_stage(
+    pipeline_id: str, stage_id: str, contact_id: str, location_id: str
+) -> None:
+    """Move the contact's pipeline opportunity to the given stage.
+
+    Searches for an existing opportunity; moves it if found, creates one if not.
+    """
+    opportunity_id = await _search_opportunity(pipeline_id, contact_id)
+    if opportunity_id:
+        await _move_opportunity_stage(opportunity_id, stage_id)
+    else:
+        await _create_opportunity(pipeline_id, stage_id, contact_id, location_id)

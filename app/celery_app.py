@@ -26,6 +26,9 @@ import app.tasks.scheduled.health_check  # noqa: F401, E402
 import app.tasks.scheduled.morning_drain  # noqa: F401, E402
 import app.tasks.scheduled.stale_reengagement  # noqa: F401, E402
 import app.tasks.scheduled.followup_sequence  # noqa: F401, E402
+import app.tasks.handoff_notification_task  # noqa: F401, E402
+import app.tasks.pipeline_sync_task  # noqa: F401, E402
+import app.tasks.doc_delivery_task  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -54,6 +57,9 @@ celery_app.conf.update(
         "reporting.*": {"queue": "celery"},
         "alerting.*": {"queue": "celery"},
         "scheduled.*": {"queue": "celery"},
+        "notifications.*": {"queue": "celery"},
+        "pipeline.*": {"queue": "celery"},
+        "documents.*": {"queue": "processing"},
     },
 )
 

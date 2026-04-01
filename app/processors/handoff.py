@@ -196,6 +196,23 @@ class HandoffProcessor(BaseProcessor):
             summary_length=len(context_summary),
         )
 
+        # Enqueue WhatsApp notification to Fernando (fail-open)
+        try:
+            from app.tasks.handoff_notification_task import send_handoff_notification
+
+            send_handoff_notification.delay(
+                lead_data.get("contact_id", ""),
+                lead_data.get("phone", ""),
+                lead_data.get("name", ""),
+                reason,
+                priority,
+                context_summary,
+                conversation_context.get("mostRecentBuilding", "unknown"),
+                trace_id,
+            )
+        except Exception:
+            logger.exception("handoff.notification_enqueue_failed", trace_id=trace_id)
+
         return ProcessorResult(
             response_text=transition_message,
             new_state="HANDOFF",

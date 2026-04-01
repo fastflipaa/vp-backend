@@ -403,6 +403,39 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                         "direct_state_save_failed", trace_id=trace_id
                     )
 
+        # ── Stage 7.5: Pipeline Stage Sync (fire-and-forget) ──
+        transitioned_state = None
+        if result.new_state:
+            # Capture whichever state was actually saved
+            try:
+                transitioned_state = new_state  # from SM transition
+            except NameError:
+                transitioned_state = result.new_state  # from direct save fallback
+
+        if transitioned_state and contact_id:
+            try:
+                from app.tasks.pipeline_sync_task import sync_pipeline_stage
+                sync_pipeline_stage.delay(contact_id, transitioned_state, trace_id)
+            except Exception:
+                logger.exception("pipeline_sync_enqueue_failed", trace_id=trace_id)
+
+        # ── Stage 8.5: Handoff Notification (if applicable) ──
+        if result.should_handoff and contact_id:
+            try:
+                from app.tasks.handoff_notification_task import send_handoff_notification
+                send_handoff_notification.delay(
+                    contact_id,
+                    phone,
+                    lead_data.get("name", ""),
+                    result.metadata.get("handoff_reason", "unknown"),
+                    result.metadata.get("priority", "normal"),
+                    result.metadata.get("context_summary", ""),
+                    lead_data.get("building_source", "unknown"),
+                    trace_id,
+                )
+            except Exception:
+                logger.exception("handoff_notification_enqueue_failed", trace_id=trace_id)
+
         # Save sub-state updates (qualifying progress)
         if result.sub_state_update:
             try:
