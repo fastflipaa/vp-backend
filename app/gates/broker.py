@@ -137,7 +137,7 @@ def _classify_with_haiku(message: str, client, timeout: float = 2.0) -> dict:
     Returns dict with keys: classification, confidence, reason, method.
     """
     response = client.messages.create(
-        model="claude-3-5-haiku-20241022",
+        model="claude-haiku-4-5-20251001",
         max_tokens=100,
         timeout=timeout,
         system=(

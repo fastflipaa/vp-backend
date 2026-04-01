@@ -201,7 +201,7 @@ class ClaudeService:
             response_text = await self.generate(
                 system_prompt=system_prompt,
                 user_message=user_msg,
-                model=config.get("model", "claude-3-5-haiku-20241022"),
+                model=config.get("model", "claude-haiku-4-5-20251001"),
                 max_tokens=config.get("max_tokens", 100),
             )
 

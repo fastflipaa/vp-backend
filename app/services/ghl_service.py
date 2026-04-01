@@ -27,25 +27,24 @@ from app.config import settings
 
 logger = structlog.get_logger()
 
-# --- Module-level singleton ---
-
-_ghl_client: httpx.AsyncClient | None = None
+# --- Per-call client factory ---
+# Each asyncio.run() creates a new event loop, so we cannot cache an
+# AsyncClient across calls (it binds to the loop that created it).
+# Instead, create a fresh client per call.  httpx.AsyncClient is cheap
+# to instantiate and handles connection pooling internally.
 
 
 def get_ghl_client() -> httpx.AsyncClient:
-    """Return the singleton httpx AsyncClient for GHL API calls."""
-    global _ghl_client
-    if _ghl_client is None:
-        _ghl_client = httpx.AsyncClient(
-            base_url="https://services.leadconnectorhq.com",
-            headers={
-                "Authorization": f"Bearer {settings.GHL_TOKEN}",
-                "Version": "2021-07-28",
-                "Content-Type": "application/json",
-            },
-            timeout=httpx.Timeout(30.0, connect=10.0),
-        )
-    return _ghl_client
+    """Return a fresh httpx AsyncClient for GHL API calls."""
+    return httpx.AsyncClient(
+        base_url="https://services.leadconnectorhq.com",
+        headers={
+            "Authorization": f"Bearer {settings.GHL_TOKEN}",
+            "Version": "2021-07-28",
+            "Content-Type": "application/json",
+        },
+        timeout=httpx.Timeout(30.0, connect=10.0),
+    )
 
 
 # --- Retry predicate ---

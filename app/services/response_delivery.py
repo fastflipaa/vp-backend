@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import redis
@@ -80,6 +81,9 @@ class ResponseDeliveryService:
         """
         start = time.monotonic()
         lead_phone = lead_phone or phone
+
+        # 0. Strip trailing JSON metadata from Claude response
+        response_text = ResponseDeliveryService._strip_json_metadata(response_text)
 
         # 1. Clean response through PII filter
         cleaned = PIIFilter.clean(
@@ -263,6 +267,25 @@ class ResponseDeliveryService:
                 trace_id=trace_id,
                 error=str(e),
             )
+
+    @staticmethod
+    def _strip_json_metadata(text: str) -> str:
+        """Strip trailing JSON metadata blocks from Claude responses.
+
+        LEVITAS prompts instruct Claude to append hidden JSON like:
+        {"cadence": "explorer", "language": "es", ...}
+        This must be removed before sending to the lead.
+        """
+        # Match JSON block at end of message (possibly preceded by whitespace/newlines)
+        stripped = re.sub(
+            r'\s*\{["\'](?:cadence|language|sentiment|interest_type|budget_min|'
+            r'matched_building|timeline|building_mentioned|confidence|response'
+            r')["\'].*\}\s*$',
+            "",
+            text,
+            flags=re.DOTALL,
+        ).strip()
+        return stripped if stripped else text
 
     @staticmethod
     def _format_for_channel(message: str, channel: str) -> str:
