@@ -111,7 +111,7 @@ class BuildingRepository:
         params: dict[str, Any] = {"known_ids": building_ids}
 
         if budget_max is not None:
-            budget_clause = "AND rec.price_min <= $budget"
+            budget_clause = "AND rec.price_min_usd <= $budget"
             params["budget"] = budget_max
 
         query = f"""

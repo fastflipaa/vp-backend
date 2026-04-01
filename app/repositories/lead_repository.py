@@ -222,7 +222,8 @@ class LeadRepository:
             """
             MATCH (l:Lead {phone: $phone})-[:INTERESTED_IN]->(b:Building)
             RETURN b.name AS name, b.building_id AS building_id,
-                   b.price_range AS price_range
+                   b.price_min_usd AS price_min_usd,
+                   b.price_max_usd AS price_max_usd
             """,
             phone=phone,
         )

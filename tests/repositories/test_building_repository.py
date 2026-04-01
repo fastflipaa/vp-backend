@@ -42,7 +42,10 @@ async def _create_lead_with_buildings(
                 MERGE (b:Building {building_id: $bid})
                 SET b.name = 'Tower ' + $bid,
                     b.location = 'Polanco',
-                    b.price_range = '5M-10M',
+                    b.price_min_usd = 5000000,
+                    b.price_max_usd = 10000000,
+                    b.city = 'CDMX',
+                    b.country = 'Mexico',
                     b.status = 'available'
                 WITH b
                 MATCH (l:Lead {phone: $phone})
@@ -91,8 +94,9 @@ async def _create_similar_buildings(driver, source_id: str, target_ids: list[str
                 SET s.name = 'Tower ' + $sid
                 MERGE (t:Building {building_id: $tid})
                 SET t.name = 'Tower ' + $tid,
-                    t.price_range = '6M-12M',
-                    t.price_min = $price_min
+                    t.price_min_usd = $price_min,
+                    t.price_max_usd = $price_min + 2000000,
+                    t.city = 'CDMX'
                 MERGE (s)-[:SIMILAR_TO {score: $score}]->(t)
                 """,
                 sid=source_id,
@@ -124,8 +128,9 @@ class TestGetBuildingsForLead:
         # Verify all expected fields are present
         for r in results:
             assert "name" in r
-            assert "location" in r
-            assert "price_range" in r
+            assert "city" in r
+            assert "price_min_usd" in r
+            assert "price_max_usd" in r
             assert "status" in r
 
     async def test_get_buildings_for_lead_empty(self, neo4j_driver):
