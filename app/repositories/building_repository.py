@@ -28,8 +28,7 @@ class BuildingRepository:
     async def get_buildings_for_lead(self, phone: str) -> list[dict[str, Any]]:
         """Get all buildings a lead has expressed interest in.
 
-        Returns list of dicts with: name, building_id, location,
-        price_range, status.
+        Returns building data + unit types for Claude context.
         """
         async with self._driver.session() as session:
             result = await session.execute_read(
@@ -47,11 +46,29 @@ class BuildingRepository:
         result = await tx.run(
             """
             MATCH (l:Lead {phone: $phone})-[:INTERESTED_IN]->(b:Building)
+            OPTIONAL MATCH (b)-[:HAS_UNIT]->(u:UnitType)
+            WITH b,
+                 collect(DISTINCT {
+                     name: u.name,
+                     bedrooms: u.bedrooms,
+                     floor_range: u.floor_range,
+                     description: u.description,
+                     notes: u.notes
+                 }) AS units
             RETURN b.name AS name,
                    b.building_id AS building_id,
-                   b.location AS location,
-                   b.price_range AS price_range,
-                   b.status AS status
+                   b.city AS city,
+                   b.country AS country,
+                   b.price_min_usd AS price_min_usd,
+                   b.price_max_usd AS price_max_usd,
+                   b.status AS status,
+                   b.total_floors AS total_floors,
+                   b.total_units AS total_units,
+                   b.views AS views,
+                   b.key_features AS key_features,
+                   b.description_es AS description_es,
+                   b.completion_date AS completion_date,
+                   units
             """,
             phone=phone,
         )
@@ -104,7 +121,10 @@ class BuildingRepository:
           {budget_clause}
         RETURN rec.name AS name,
                rec.building_id AS building_id,
-               rec.price_range AS price_range,
+               rec.price_min_usd AS price_min_usd,
+               rec.price_max_usd AS price_max_usd,
+               rec.city AS city,
+               rec.status AS status,
                sim.score AS similarity
         ORDER BY similarity DESC
         LIMIT 5
