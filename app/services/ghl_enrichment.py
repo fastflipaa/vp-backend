@@ -71,16 +71,29 @@ class GHLEnrichmentService:
                 error=str(e),
             )
 
-        # 3. Fetch recent messages (only if conversation_id provided)
-        if conversation_id:
+        # 3. Fetch recent messages -- search for conversation if ID not provided
+        resolved_conversation_id = conversation_id
+        if not resolved_conversation_id and contact_id:
+            try:
+                conv = await ghl_service.search_conversations(contact_id)
+                if conv:
+                    resolved_conversation_id = conv.get("id", "")
+            except Exception as e:
+                logger.warning(
+                    "ghl_enrichment.conversation_search_failed",
+                    contact_id=contact_id,
+                    error=str(e),
+                )
+
+        if resolved_conversation_id:
             try:
                 messages = await ghl_service.get_conversation_messages(
-                    conversation_id, limit=10
+                    resolved_conversation_id, limit=10
                 )
             except Exception as e:
                 logger.warning(
                     "ghl_enrichment.messages_failed",
-                    conversation_id=conversation_id,
+                    conversation_id=resolved_conversation_id,
                     error=str(e),
                 )
 

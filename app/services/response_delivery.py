@@ -270,21 +270,27 @@ class ResponseDeliveryService:
 
     @staticmethod
     def _strip_json_metadata(text: str) -> str:
-        """Strip trailing JSON metadata blocks from Claude responses.
+        """Strip ALL JSON blocks from Claude responses.
 
         LEVITAS prompts instruct Claude to append hidden JSON like:
         {"cadence": "explorer", "language": "es", ...}
         This must be removed before sending to the lead.
+        Catches any JSON object at the end OR anywhere in the text.
         """
-        # Match JSON block at end of message (possibly preceded by whitespace/newlines)
+        # First: strip any JSON block at the end of the message
+        stripped = re.sub(r'\s*\{[^{}]*\}\s*$', "", text).strip()
+
+        # Second: strip any remaining JSON blocks that look like metadata
+        # (contains known metadata keys anywhere in the text)
         stripped = re.sub(
-            r'\s*\{["\'](?:cadence|language|sentiment|interest_type|budget_min|'
-            r'matched_building|timeline|building_mentioned|confidence|response'
-            r')["\'].*\}\s*$',
+            r'\{[^{}]*"(?:cadence|language|sentiment|interest_type|budget_min|'
+            r'matched_building|timeline|building_mentioned|confidence|response|'
+            r'next_action|tone_applied|escalate|escalation_reason|sentiment_confidence'
+            r')"[^{}]*\}',
             "",
-            text,
-            flags=re.DOTALL,
+            stripped,
         ).strip()
+
         return stripped if stripped else text
 
     @staticmethod

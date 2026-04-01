@@ -252,12 +252,15 @@ async def update_contact(contact_id: str, data: dict) -> dict:
 
 
 @_retry_decorator
-async def _search_opportunity(pipeline_id: str, contact_id: str) -> str | None:
+async def _search_opportunity(pipeline_id: str, contact_id: str, location_id: str = "") -> str | None:
     """Return the first opportunity ID for the contact in the given pipeline."""
     client = get_ghl_client()
+    params = {"pipelineId": pipeline_id, "contactId": contact_id}
+    if location_id:
+        params["location_id"] = location_id
     response = await client.get(
         "/opportunities/search",
-        params={"pipelineId": pipeline_id, "contactId": contact_id},
+        params=params,
     )
     response.raise_for_status()
     data = response.json()
@@ -313,7 +316,7 @@ async def update_opportunity_stage(
 
     Searches for an existing opportunity; moves it if found, creates one if not.
     """
-    opportunity_id = await _search_opportunity(pipeline_id, contact_id)
+    opportunity_id = await _search_opportunity(pipeline_id, contact_id, location_id)
     if opportunity_id:
         await _move_opportunity_stage(opportunity_id, stage_id)
     else:

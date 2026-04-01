@@ -465,6 +465,19 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 logger.exception("delivery_failed", trace_id=trace_id)
                 delivery_result = {"status": "delivery_error"}
 
+        # ── Stage 9: Write GHL Note (CRM sync) ──
+        if result.response_text and contact_id:
+            try:
+                from app.services import ghl_service
+                note_body = (
+                    f"[AI - {current_state}→{result.new_state or current_state}] "
+                    f"Lead: {message[:100] if message else '(auto)'}\n"
+                    f"AI: {result.response_text[:200]}"
+                )
+                await ghl_service.add_note(contact_id, note_body)
+            except Exception:
+                logger.warning("ghl_note_write_failed", trace_id=trace_id)
+
         duration_ms = (time.time() - start_time) * 1000
         logger.info(
             "pipeline_complete",
