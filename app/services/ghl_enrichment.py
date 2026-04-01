@@ -31,6 +31,17 @@ class GHLEnrichmentService:
     3. Recent conversation messages (last 10, if conversation_id provided)
     """
 
+    @staticmethod
+    def _extract_custom_field(custom_fields, field_name: str) -> str:
+        """Extract a value from GHL customFields (list or dict format)."""
+        if isinstance(custom_fields, dict):
+            return custom_fields.get(field_name, "")
+        if isinstance(custom_fields, list):
+            for f in custom_fields:
+                if isinstance(f, dict) and f.get("id", "") == field_name:
+                    return f.get("value", "")
+        return ""
+
     async def enrich(
         self, contact_id: str, conversation_id: str = ""
     ) -> dict:
@@ -115,7 +126,7 @@ class GHLEnrichmentService:
                 for m in messages[:10]
                 if isinstance(m, dict)
             ],
-            "formName": contact.get("customFields", {}).get("formName", ""),
+            "formName": GHLEnrichmentService._extract_custom_field(contact.get("customFields", []), "formName"),
         }
 
         logger.info(

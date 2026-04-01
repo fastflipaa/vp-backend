@@ -164,13 +164,21 @@ async def get_conversation_messages(
     )
     response.raise_for_status()
     data = response.json()
-    messages = data.get("messages", data) if isinstance(data, dict) else data
+    # GHL returns {"messages": {"lastMessageId": "...", "messages": [...]}}
+    # Handle both nested and flat formats
+    raw = data.get("messages", data) if isinstance(data, dict) else data
+    if isinstance(raw, dict):
+        messages = raw.get("messages", [])
+    elif isinstance(raw, list):
+        messages = raw
+    else:
+        messages = []
     logger.debug(
         "ghl.get_conversation_messages",
         conversation_id=conversation_id,
-        count=len(messages) if isinstance(messages, list) else 0,
+        count=len(messages),
     )
-    return messages if isinstance(messages, list) else []
+    return messages
 
 
 @_retry_decorator
