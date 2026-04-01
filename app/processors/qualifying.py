@@ -415,8 +415,8 @@ class QualifyingProcessor(BaseProcessor):
                 or conversation_context.get("mostRecentBuilding", "")
             )
             _enqueue_doc_delivery(
-                contact_id=contact_id,
-                phone=phone,
+                contact_id=lead_data.get("contact_id", ""),
+                phone=lead_data.get("phone", ""),
                 building_name=building_name,
                 channel=lead_data.get("channel", "SMS"),
                 trace_id=trace_id,
@@ -664,8 +664,8 @@ class QualifyingProcessor(BaseProcessor):
                 or conversation_context.get("mostRecentBuilding", "")
             )
             _enqueue_doc_delivery(
-                contact_id=contact_id,
-                phone=phone,
+                contact_id=lead_data.get("contact_id", ""),
+                phone=lead_data.get("phone", ""),
                 building_name=building_name,
                 channel=lead_data.get("channel", "SMS"),
                 trace_id=trace_id,
