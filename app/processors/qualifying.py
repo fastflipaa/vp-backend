@@ -80,6 +80,7 @@ def _enqueue_doc_delivery(
     building_name: str,
     channel: str,
     trace_id: str,
+    language: str = "es",
 ) -> None:
     """Fire-and-forget: enqueue a doc delivery task for this lead.
 
@@ -88,7 +89,7 @@ def _enqueue_doc_delivery(
     """
     try:
         from app.tasks.doc_delivery_task import deliver_documents
-        deliver_documents.delay(contact_id, phone, building_name, channel, trace_id)
+        deliver_documents.delay(contact_id, phone, building_name, channel, trace_id, language)
     except Exception:
         logger.exception(
             "qualifying.doc_delivery_enqueue_failed",
@@ -557,6 +558,7 @@ class QualifyingProcessor(BaseProcessor):
                 building_name=building_name,
                 channel=lead_data.get("channel", "SMS"),
                 trace_id=trace_id,
+                language=lead_data.get("language", "es"),
             )
             logger.info(
                 "qualifying.doc_delivery_enqueued",
@@ -819,6 +821,7 @@ class QualifyingProcessor(BaseProcessor):
                 building_name=building_name,
                 channel=lead_data.get("channel", "SMS"),
                 trace_id=trace_id,
+                language=lead_data.get("language", "es"),
             )
             logger.info(
                 "qualifying.building_match.doc_delivery_enqueued",
