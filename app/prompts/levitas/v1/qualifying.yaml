@@ -49,6 +49,7 @@ cadence_block: |
 
   FULL GHL CONVERSATION CONTEXT (CRITICAL -- use this to understand what building the lead MOST RECENTLY discussed):
   {{ ghl_conversation_context }}
+  DO NOT REPEAT: Before sharing ANY building fact (amenities, unit count, lagoon size, floor count, designer names, etc.), CHECK the conversation above. If you or Natalia already mentioned it in a prior message, DO NOT say it again. Instead, reference it briefly ("Como te comente..." or "Del [building] que platicamos...") and move to NEW information or the next qualifying question. Repeating the same facts across messages makes the conversation feel robotic and fake. Each response should ADD new value, not rehash what was already said.
   {% endif %}{% if most_recent_building is defined and most_recent_building %}
   MOST RECENT BUILDING FROM GHL: {{ most_recent_building }} -- PRIORITIZE this building over older interests.
   {% endif %} Quote actual prices, actual unit sizes, actual amenities. Do NOT make up data. Only use data provided above.
