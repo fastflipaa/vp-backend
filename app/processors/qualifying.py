@@ -295,10 +295,13 @@ def _format_building_context(buildings: list[dict]) -> str:
                         lines.append(f"    Unit: {uname} ({beds} bed)")
         else:
             lines.append(
-                f"  PRICING: NOT VERIFIED — Tell the lead: "
-                f"\"Déjame consultar con Fernando los precios actualizados de {name}.\" "
-                f"Keep next_action as \"continue_qualifying\" — deferring pricing is normal, NOT a handoff. "
-                f"ONLY set \"handoff_fernando\" if the lead explicitly says they want to talk to a person or insists repeatedly on getting exact pricing NOW."
+                f"  PRICING: NOT VERIFIED — You do NOT have pricing for {name}. "
+                f"ONCE (first time only): mention you will check with Fernando. "
+                f"AFTER THAT: if the GHL conversation already shows you said you would check with Fernando, "
+                f"DO NOT say it again. Just continue qualifying naturally — ask about their preferences, "
+                f"timeline, what matters most to them. Repeating 'voy a consultar con Fernando' every message sounds robotic. "
+                f"Keep next_action as \"continue_qualifying\". "
+                f"ONLY set \"handoff_fernando\" if the lead explicitly asks to speak with a human."
             )
             if b.get("description_es"):
                 lines.append(f"  Description: {b['description_es']}")
