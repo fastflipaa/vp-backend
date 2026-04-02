@@ -57,65 +57,68 @@ def followup_check() -> dict:
     """
 
     async def _run() -> dict:
-        from app.repositories.base import get_driver
+        from app.repositories.base import close_driver, get_driver
         from app.repositories.lead_repository import LeadRepository
         from app.tasks.processing_task import process_message
 
-        driver = await get_driver()
-        lead_repo = LeadRepository(driver)
+        try:
+            driver = await get_driver()
+            lead_repo = LeadRepository(driver)
 
-        # Find leads due for follow-up
-        followup_leads = await lead_repo.find_followup_due(limit=20)
+            # Find leads due for follow-up
+            followup_leads = await lead_repo.find_followup_due(limit=20)
 
-        if not followup_leads:
-            logger.info("followup_check.no_leads_due")
-            return {"followups_triggered": 0}
-
-        logger.info(
-            "followup_check.leads_found",
-            count=len(followup_leads),
-        )
-
-        followups_triggered = 0
-
-        for lead in followup_leads:
-            contact_id = lead["contact_id"]
-            phone = lead["phone"]
-            name = lead.get("name", "")
-
-            trace_id = str(uuid.uuid4())
-
-            # Build synthetic payload for process_message
-            synthetic_payload = {
-                "contactId": contact_id,
-                "phone": phone,
-                "message": "",
-                "direction": "outbound",
-                "messageType": "follow_up",
-                "isAutoTrigger": True,
-                "tags": [],
-                "leadName": name,
-            }
-
-            # Route through full processing pipeline
-            process_message.delay(synthetic_payload, trace_id)
-            followups_triggered += 1
+            if not followup_leads:
+                logger.info("followup_check.no_leads_due")
+                return {"followups_triggered": 0}
 
             logger.info(
-                "followup_check.lead_queued",
-                contact_id=contact_id,
-                trace_id=trace_id,
+                "followup_check.leads_found",
+                count=len(followup_leads),
             )
 
-            # 5-second delay between leads to avoid burst spam
-            if followups_triggered < len(followup_leads):
-                await asyncio.sleep(5)
+            followups_triggered = 0
 
-        logger.info(
-            "followup_check.complete",
-            followups_triggered=followups_triggered,
-        )
+            for lead in followup_leads:
+                contact_id = lead["contact_id"]
+                phone = lead["phone"]
+                name = lead.get("name", "")
 
-        return {"followups_triggered": followups_triggered}
+                trace_id = str(uuid.uuid4())
+
+                # Build synthetic payload for process_message
+                synthetic_payload = {
+                    "contactId": contact_id,
+                    "phone": phone,
+                    "message": "",
+                    "direction": "outbound",
+                    "messageType": "follow_up",
+                    "isAutoTrigger": True,
+                    "tags": [],
+                    "leadName": name,
+                }
+
+                # Route through full processing pipeline
+                process_message.delay(synthetic_payload, trace_id)
+                followups_triggered += 1
+
+                logger.info(
+                    "followup_check.lead_queued",
+                    contact_id=contact_id,
+                    trace_id=trace_id,
+                )
+
+                # 5-second delay between leads to avoid burst spam
+                if followups_triggered < len(followup_leads):
+                    await asyncio.sleep(5)
+
+            logger.info(
+                "followup_check.complete",
+                followups_triggered=followups_triggered,
+            )
+
+            return {"followups_triggered": followups_triggered}
+        finally:
+            await close_driver()
 
     return asyncio.run(_run())

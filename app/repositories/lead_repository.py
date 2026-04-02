@@ -437,11 +437,12 @@ class LeadRepository:
         return [dict(record) async for record in result]
 
     async def find_followup_due(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Find leads in FOLLOW_UP state needing a follow-up message.
+        """Find leads needing a follow-up nudge.
 
-        Returns leads whose last interaction (``updatedAt``) was more than
-        24 hours ago but less than 30 days ago. Leads silent for over 30 days
-        are handled by the stale re-engagement COLD tier instead.
+        Includes leads in FOLLOW_UP or QUALIFYING state whose last
+        interaction was more than 24 hours ago but less than 30 days.
+        Leads silent for over 30 days are handled by the stale
+        re-engagement COLD tier instead.
         """
         async with self._driver.session() as session:
             results = await session.execute_read(
@@ -457,10 +458,15 @@ class LeadRepository:
     ) -> list[dict[str, Any]]:
         result = await tx.run(
             """
-            MATCH (l:Lead)
-            WHERE l.current_state = 'FOLLOW_UP'
-            AND l.updatedAt < datetime() - duration({hours: 24})
-            AND l.updatedAt > datetime() - duration({days: 30})
+            MATCH (l:Lead)-[:HAS_INTERACTION]->(i:Interaction)
+            WHERE l.current_state IN ['FOLLOW_UP', 'QUALIFYING']
+            WITH l, max(i.created_at) AS last_interaction
+            WHERE last_interaction < datetime() - duration({hours: 24})
+            AND last_interaction > datetime() - duration({days: 7})
+            AND NOT EXISTS {
+              MATCH (l)-[:HAS_RECOVERY]->(r:RecoveryAttempt)
+              WHERE r.created_at > datetime() - duration({days: 1})
+            }
             RETURN l.ghl_contact_id AS contact_id,
                    l.phone AS phone,
                    l.name AS name,

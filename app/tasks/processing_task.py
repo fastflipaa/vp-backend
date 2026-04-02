@@ -379,8 +379,11 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
         if result.new_state:
             try:
                 sm = ConversationSM.from_persisted_state(current_state, contact_id)
-                # Attempt transition via the SM with processor metadata
-                sm.advance(**result.metadata)
+                # Use escalate event for handoffs, advance for normal transitions
+                if result.should_handoff:
+                    sm.escalate()
+                else:
+                    sm.advance(**result.metadata)
                 new_state = sm.model.state  # Updated by after_transition hook
                 await lead_repo.save_state(contact_id, new_state)
                 logger.info(
