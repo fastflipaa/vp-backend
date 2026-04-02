@@ -200,11 +200,11 @@ class BuildingRepository:
         result = await tx.run(
             """
             MATCH (b:Building)-[:HAS_DOCUMENT]->(d:Document)
-            WHERE toLower(b.name) = toLower($bname)
+            WHERE toLower(b.name) CONTAINS toLower($bname)
             AND NOT EXISTS {
                 MATCH (l:Lead {phone: $phone})-[:SENT_DOCUMENT]->(d)
             }
-            RETURN d.name AS name, d.url AS url, d.type AS type, b.building_id AS building_id
+            RETURN d.name AS name, d.url AS url, d.type AS type, b.building_id AS building_id, b.name AS building_name
             """,
             bname=building_name,
             phone=phone,
