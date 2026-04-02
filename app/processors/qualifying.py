@@ -240,7 +240,8 @@ def _format_building_context(buildings: list[dict]) -> str:
             lines.append(
                 f"  PRICING: NOT VERIFIED — Tell the lead: "
                 f"\"Déjame consultar con Fernando los precios actualizados de {name}.\" "
-                f"Set next_action to \"handoff_fernando\" if they insist on pricing."
+                f"Keep next_action as \"continue_qualifying\" — deferring pricing is normal, NOT a handoff. "
+                f"ONLY set \"handoff_fernando\" if the lead explicitly says they want to talk to a person or insists repeatedly on getting exact pricing NOW."
             )
             if b.get("description_es"):
                 lines.append(f"  Description: {b['description_es']}")
