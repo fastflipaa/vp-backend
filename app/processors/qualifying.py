@@ -98,6 +98,63 @@ def _enqueue_doc_delivery(
         )
 
 
+def _maybe_send_pricing_alert(
+    response_msg: str,
+    lead_data: dict,
+    building_context: str,
+    message: str,
+    trace_id: str,
+) -> None:
+    """Send a pricing alert to the team if Claude deferred pricing.
+
+    Detects pricing deferral by checking:
+    1. Building context contains "NOT VERIFIED" (unverified buildings were shown)
+    2. Claude's response mentions Fernando/consultar/verificar (pricing deferral)
+
+    This is NOT a handoff — just a notification so the team can provide pricing.
+    Fail-open: logs and continues if anything goes wrong.
+    """
+    has_unverified = "NOT VERIFIED" in building_context
+    deferral_keywords = ["fernando", "consultar", "verificar", "check with", "get back"]
+    response_lower = response_msg.lower()
+    deferred_pricing = any(kw in response_lower for kw in deferral_keywords)
+
+    if not (has_unverified and deferred_pricing):
+        return
+
+    try:
+        from app.tasks.pricing_alert_task import send_pricing_alert
+
+        # Extract building name from response or context
+        building = "Unknown"
+        for line in building_context.split("\n"):
+            if line.startswith("BUILDING: "):
+                candidate = line.replace("BUILDING: ", "").strip()
+                if candidate.lower() in response_lower:
+                    building = candidate
+                    break
+                building = candidate  # fallback to last seen
+
+        send_pricing_alert.delay(
+            contact_id=lead_data.get("contact_id", ""),
+            phone=lead_data.get("phone", ""),
+            lead_name=lead_data.get("name", "Unknown"),
+            building=building,
+            lead_message=message,
+            trace_id=trace_id,
+        )
+        logger.info(
+            "qualifying.pricing_alert_enqueued",
+            trace_id=trace_id,
+            building=building,
+        )
+    except Exception:
+        logger.exception(
+            "qualifying.pricing_alert_enqueue_failed",
+            trace_id=trace_id,
+        )
+
+
 def _detect_cadence(message: str) -> str:
     """Detect lead cadence from message patterns.
 
@@ -504,6 +561,15 @@ class QualifyingProcessor(BaseProcessor):
                 building_name=building_name,
             )
 
+        # Pricing alert: if Claude deferred pricing to Fernando, notify the team
+        _maybe_send_pricing_alert(
+            response_msg=response_msg,
+            lead_data=lead_data,
+            building_context=building_context,
+            message=message,
+            trace_id=trace_id,
+        )
+
         # Build qualification data update
         qual_update = {"sub_state": self._next_sub_state(sub_state)}
         if sub_state == "QUAL_INTEREST" and parsed.get("interest_type"):
@@ -756,6 +822,15 @@ class QualifyingProcessor(BaseProcessor):
                 trace_id=trace_id,
                 building_name=building_name,
             )
+
+        # Pricing alert for building match
+        _maybe_send_pricing_alert(
+            response_msg=response_msg,
+            lead_data=lead_data,
+            building_context=building_context,
+            message=message,
+            trace_id=trace_id,
+        )
 
         # Record discussed building
         matched_building = parsed.get("matched_building")
