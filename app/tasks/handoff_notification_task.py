@@ -21,8 +21,10 @@ from app.celery_app import celery_app
 
 logger = structlog.get_logger()
 
-# Fernando's GHL internal contact ID
-FERNANDO_CONTACT_ID = "NuXxb4oBIbbGuMhDVtqI"
+# Fernando Bello's GHL contact ID — DISABLED until correct ID is provided
+# NuXxb4oBIbbGuMhDVtqI was Fernando Duran Romero (WRONG person)
+# User will create Fernando Bello as a contact and provide the correct ID
+FERNANDO_CONTACT_ID = ""  # Empty = notifications silently skip
 
 
 def _build_message(

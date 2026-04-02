@@ -19,8 +19,9 @@ from app.celery_app import celery_app
 
 logger = structlog.get_logger()
 
-# Fernando's GHL internal contact ID (same as handoff notification)
-FERNANDO_CONTACT_ID = "NuXxb4oBIbbGuMhDVtqI"
+# Fernando Bello's GHL contact ID — DISABLED until correct ID is provided
+# NuXxb4oBIbbGuMhDVtqI was Fernando Duran Romero (WRONG person)
+FERNANDO_CONTACT_ID = ""  # Empty = notifications silently skip
 
 
 def _build_pricing_alert(
