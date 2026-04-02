@@ -176,6 +176,24 @@ async def shadow_inbound(request: Request) -> JSONResponse:
     )
 
 
+@router.post("/webhooks/outreach")
+async def outreach_inbound(request: Request) -> JSONResponse:
+    """Alias for /webhooks/inbound — handles AI Outreach (first touch, re-engagement).
+
+    GHL 'AI Outreach Webhook' custom value points here. Same pipeline as inbound.
+    """
+    return await shadow_inbound(request)
+
+
+@router.post("/webhooks/call")
+async def call_inbound(request: Request) -> JSONResponse:
+    """Alias for /webhooks/inbound — handles AI Call webhook events.
+
+    GHL 'AI Call Webhook' custom value points here. Same pipeline as inbound.
+    """
+    return await shadow_inbound(request)
+
+
 @router.post("/webhooks/outbound")
 async def outbound_hook(request: Request) -> JSONResponse:
     """Process outbound webhook events to detect human agent activity.
