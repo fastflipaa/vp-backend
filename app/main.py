@@ -11,6 +11,7 @@ from app.config import settings  # noqa: F401 -- fail-fast import
 from app.logging_config import configure_logging
 from app.api.webhooks import router as webhooks_router
 from app.api.canary import router as canary_router
+from app.routes.lessons import router as lessons_router
 
 # Initialize structlog JSON logging before anything else
 configure_logging()
@@ -18,6 +19,7 @@ configure_logging()
 app = FastAPI(title="Vive Polanco Backend", docs_url=None, redoc_url=None)
 app.include_router(webhooks_router)
 app.include_router(canary_router)
+app.include_router(lessons_router)
 
 
 @app.on_event("startup")

@@ -70,6 +70,7 @@ class ClaudeService:
     def __init__(self, redis_client: redis.Redis) -> None:
         self.circuit_breaker = RedisCircuitBreaker("claude", redis_client)
         self.prompt_builder = PromptBuilder("v1")
+        self.learning_context: str = ""
 
     async def generate(
         self,
@@ -105,13 +106,18 @@ class ClaudeService:
             )
             raise CircuitOpenError("Circuit claude is OPEN")
 
+        # Append learning context to system prompt when present
+        effective_system = system_prompt
+        if self.learning_context:
+            effective_system = f"{system_prompt}\n\n{self.learning_context}"
+
         start = time.monotonic()
         try:
             client = get_claude_client()
             message = await client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
-                system=system_prompt,
+                system=effective_system,
                 messages=[{"role": "user", "content": user_message}],
             )
 
