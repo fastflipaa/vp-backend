@@ -304,37 +304,38 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
         processor = processor_class(**processor_kwargs)
 
         # ── Stage 5.5: Lesson Injection (GraphRAG) ──
-        try:
-            from app.repositories.learning_repository import LearningRepository
-            from app.services.monitoring.lesson_injector import LessonInjector
-            from app.services.monitoring.embedding_service import EmbeddingService
+        if settings.LEARNING_INJECTION_ENABLED:
+            try:
+                from app.repositories.learning_repository import LearningRepository
+                from app.services.monitoring.lesson_injector import LessonInjector
+                from app.services.monitoring.embedding_service import EmbeddingService
 
-            learning_repo = LearningRepository(driver)
-            embedding_svc = EmbeddingService()
-            lesson_injector = LessonInjector(learning_repo, embedding_svc)
+                learning_repo = LearningRepository(driver)
+                embedding_svc = EmbeddingService()
+                lesson_injector = LessonInjector(learning_repo, embedding_svc)
 
-            # Determine building_id from lead_data
-            _building_id = lead_data.get("building_source")
-            if _building_id == "none":
-                _building_id = None
+                # Determine building_id from lead_data
+                _building_id = lead_data.get("building_source")
+                if _building_id == "none":
+                    _building_id = None
 
-            learning_context = await lesson_injector.get_learning_context(
-                contact_id=contact_id or "",
-                building_id=_building_id,
-                state=current_state,
-                current_message=message or "",
-            )
-
-            if learning_context:
-                claude_service.learning_context = learning_context
-                logger.info(
-                    "lesson_injection_applied",
-                    trace_id=trace_id,
-                    context_length=len(learning_context),
+                learning_context = await lesson_injector.get_learning_context(
+                    contact_id=contact_id or "",
+                    building_id=_building_id,
+                    state=current_state,
+                    current_message=message or "",
                 )
-        except Exception:
-            logger.exception("lesson_injection_failed", trace_id=trace_id)
-            # Fail-open: continue without lessons
+
+                if learning_context:
+                    claude_service.learning_context = learning_context
+                    logger.info(
+                        "lesson_injection_applied",
+                        trace_id=trace_id,
+                        context_length=len(learning_context),
+                    )
+            except Exception:
+                logger.exception("lesson_injection_failed", trace_id=trace_id)
+                # Fail-open: continue without lessons
 
         # Merge lead_data with additional context
         lead_data_with_context = {

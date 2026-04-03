@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Optional
     SLACK_WEBHOOK_URL: str = ""
     OPENAI_API_KEY: str = ""
+    LEARNING_INJECTION_ENABLED: bool = False  # Kill switch: set True to enable lesson injection into prompts
 
     # Canary mode (Phase 17)
     CANARY_TAG: str = "v3-canary"
