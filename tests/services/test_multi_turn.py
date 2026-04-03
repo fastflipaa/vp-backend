@@ -149,6 +149,87 @@ class TestGetStructuredTurns:
         assert turns == []
 
 
+class TestHumanAgentDetectorHelpers:
+    """Test internal helper methods of HumanAgentDetector."""
+
+    def test_parse_timestamp_valid_iso(self):
+        """_parse_timestamp parses ISO 8601 string."""
+        d = HumanAgentDetector()
+        result = d._parse_timestamp("2026-01-01T12:00:00Z")
+        assert result is not None
+        assert result.year == 2026
+
+    def test_parse_timestamp_empty_returns_none(self):
+        """_parse_timestamp returns None for empty string."""
+        d = HumanAgentDetector()
+        assert d._parse_timestamp("") is None
+
+    def test_parse_timestamp_invalid_returns_none(self):
+        """_parse_timestamp returns None for invalid string."""
+        d = HumanAgentDetector()
+        assert d._parse_timestamp("not-a-date") is None
+
+    def test_detect_building(self):
+        """_detect_building finds building name in messages."""
+        d = HumanAgentDetector()
+        messages = [
+            {"body": "Me interesa el edificio Thompson en Polanco"},
+        ]
+        result = d._detect_building(messages)
+        assert result == "thompson"
+
+    def test_detect_building_no_match(self):
+        """_detect_building returns None when no building found."""
+        d = HumanAgentDetector()
+        messages = [
+            {"body": "Hola, quiero informacion"},
+        ]
+        result = d._detect_building(messages)
+        assert result is None
+
+    def test_check_spam_limit_reached(self):
+        """_check_spam_limit returns True for 3+ consecutive outbound."""
+        d = HumanAgentDetector()
+        messages = [
+            {"direction": "outbound"},
+            {"direction": "outbound"},
+            {"direction": "outbound"},
+            {"direction": "inbound"},
+        ]
+        assert d._check_spam_limit(messages) is True
+
+    def test_check_spam_limit_not_reached(self):
+        """_check_spam_limit returns False for < 3 consecutive outbound."""
+        d = HumanAgentDetector()
+        messages = [
+            {"direction": "outbound"},
+            {"direction": "inbound"},
+            {"direction": "outbound"},
+        ]
+        assert d._check_spam_limit(messages) is False
+
+    def test_get_conversation_context_empty(self):
+        """get_conversation_context with no messages returns defaults."""
+        d = HumanAgentDetector()
+        d._last_messages = []
+        result = d.get_conversation_context()
+        assert result["ghlConversationContext"] == ""
+        assert result["mostRecentBuilding"] is None
+        assert result["spamLimitReached"] is False
+
+    def test_get_conversation_context_with_messages(self):
+        """get_conversation_context with messages returns context string."""
+        d = HumanAgentDetector()
+        d._last_messages = [
+            {"direction": "inbound", "body": "Hola, me interesa thompson"},
+            {"direction": "outbound", "body": "Bienvenido!"},
+        ]
+        result = d.get_conversation_context()
+        assert "inbound" in result["ghlConversationContext"]
+        assert result["mostRecentBuilding"] == "thompson"
+        assert result["spamLimitReached"] is False
+
+
 # ---------------------------------------------------------------------------
 # ClaudeService.generate() conversation_history tests
 # ---------------------------------------------------------------------------
@@ -270,3 +351,69 @@ class TestClaudeServiceConversationHistory:
         system_prompt = call_kwargs["system"]
         assert "LEARNING CONTEXT: test lesson" in system_prompt
         assert "Base system prompt" in system_prompt
+
+
+class TestClaudeServiceClassify:
+    """Test ClaudeService.classify() method."""
+
+    async def test_classify_returns_classification(self, redis_client):
+        """classify() returns classification dict from valid JSON response."""
+        from app.services.claude_service import ClaudeService
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"classification": "potential_lead", "confidence": 0.95, "reason": "interested"}')]
+        mock_response.usage = MagicMock(input_tokens=10, output_tokens=5)
+        mock_response.stop_reason = "end_turn"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch("app.services.claude_service.get_claude_client", return_value=mock_client):
+            service = ClaudeService(redis_client)
+            result = await service.classify("Me interesa un depto", "+5215512345678")
+
+        assert result["classification"] == "potential_lead"
+        assert result["confidence"] == 0.95
+
+    async def test_classify_json_parse_error_returns_ambiguous(self, redis_client):
+        """classify() returns ambiguous on JSON parse error."""
+        from app.services.claude_service import ClaudeService
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="not valid json at all")]
+        mock_response.usage = MagicMock(input_tokens=10, output_tokens=5)
+        mock_response.stop_reason = "end_turn"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch("app.services.claude_service.get_claude_client", return_value=mock_client):
+            service = ClaudeService(redis_client)
+            result = await service.classify("Hola", "+5215512345678")
+
+        assert result["classification"] == "ambiguous"
+        assert result["reason"] == "parse_error"
+
+    async def test_classify_circuit_open_returns_ambiguous(self, redis_client):
+        """classify() returns ambiguous when circuit breaker is open."""
+        from app.services.claude_service import ClaudeService
+
+        service = ClaudeService(redis_client)
+        # Open the circuit by recording enough failures
+        for _ in range(3):
+            service.circuit_breaker.record_failure()
+
+        result = await service.classify("Hola", "+5215512345678")
+
+        assert result["classification"] == "ambiguous"
+        assert result["reason"] == "circuit_open"
+
+    async def test_is_circuit_open(self, redis_client):
+        """is_circuit_open() returns correct state."""
+        from app.services.claude_service import ClaudeService
+
+        service = ClaudeService(redis_client)
+        assert service.is_circuit_open() is False
+
+        for _ in range(3):
+            service.circuit_breaker.record_failure()
+
+        assert service.is_circuit_open() is True
