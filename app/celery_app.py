@@ -29,6 +29,8 @@ import app.tasks.scheduled.followup_sequence  # noqa: F401, E402
 import app.tasks.handoff_notification_task  # noqa: F401, E402
 import app.tasks.pipeline_sync_task  # noqa: F401, E402
 import app.tasks.doc_delivery_task  # noqa: F401, E402
+import app.tasks.scheduled.conversation_quality_scan  # noqa: F401, E402
+import app.tasks.scheduled.system_health_scan  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -84,5 +86,13 @@ celery_app.conf.beat_schedule = {
     "followup-sequence-hourly": {
         "task": "scheduled.followup_check",
         "schedule": crontab(minute=0),
+    },
+    "conversation-quality-scan-15min": {
+        "task": "scheduled.conversation_quality_scan",
+        "schedule": crontab(minute="*/15"),
+    },
+    "system-health-scan-5min": {
+        "task": "scheduled.system_health_scan",
+        "schedule": crontab(minute="*/5"),
     },
 }
