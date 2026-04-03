@@ -189,7 +189,7 @@ async def _query_orphan_leads(driver) -> list[dict]:
            l.phone AS phone,
            l.name AS name
     ORDER BY l.createdAt DESC
-    LIMIT 10
+    LIMIT 50
     """
     async with driver.session() as session:
         result = await session.run(query)
