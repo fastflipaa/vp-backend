@@ -417,7 +417,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             try:
                 sm = ConversationSM.from_persisted_state(current_state, contact_id)
                 # Use escalate event for handoffs, advance for normal transitions
-                if result.should_handoff:
+                if result.should_handoff or result.new_state == "HANDOFF":
                     sm.escalate()
                 else:
                     sm.advance(**result.metadata)
