@@ -31,6 +31,7 @@ import app.tasks.pipeline_sync_task  # noqa: F401, E402
 import app.tasks.doc_delivery_task  # noqa: F401, E402
 import app.tasks.scheduled.conversation_quality_scan  # noqa: F401, E402
 import app.tasks.scheduled.system_health_scan  # noqa: F401, E402
+import app.tasks.scheduled.lead_operator  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -94,5 +95,9 @@ celery_app.conf.beat_schedule = {
     "system-health-scan-5min": {
         "task": "scheduled.system_health_scan",
         "schedule": crontab(minute="*/5"),
+    },
+    "lead-operator-sweep-3h": {
+        "task": "scheduled.lead_operator_sweep",
+        "schedule": crontab(minute=30, hour="*/3"),  # Every 3 hours at :30
     },
 }
