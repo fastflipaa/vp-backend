@@ -211,6 +211,53 @@ class BuildingRepository:
         )
         return [dict(r) async for r in result]
 
+    async def get_unsent_docs_by_name_and_type(
+        self, phone: str, building_name: str, doc_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Find unsent documents filtered by doc_type.
+
+        Args:
+            phone: Lead phone number.
+            building_name: Building name (case-insensitive CONTAINS match).
+            doc_type: Optional filter: 'floorplan', 'brochure', 'factsheet',
+                      'pricelist', 'other'. None returns all docs.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_unsent_docs_by_name_and_type_tx, phone, building_name, doc_type
+            )
+            logger.debug(
+                "unsent_docs_by_name_and_type_found",
+                phone=phone[-4:],
+                building_name=building_name,
+                doc_type=doc_type,
+                count=len(result),
+            )
+            return result
+
+    @staticmethod
+    async def _get_unsent_docs_by_name_and_type_tx(
+        tx, phone: str, building_name: str, doc_type: str | None
+    ) -> list[dict[str, Any]]:
+        # Build query with optional doc_type filter
+        type_clause = "AND d.doc_type = $doc_type" if doc_type else ""
+        query = f"""
+            MATCH (b:Building)-[:HAS_DOCUMENT]->(d:Document)
+            WHERE toLower(b.name) CONTAINS toLower($bname)
+            AND NOT EXISTS {{
+                MATCH (l:Lead {{phone: $phone}})-[:SENT_DOCUMENT]->(d)
+            }}
+            {type_clause}
+            RETURN d.name AS name, d.url AS url, d.type AS type,
+                   d.doc_type AS doc_type,
+                   b.building_id AS building_id, b.name AS building_name
+        """
+        params: dict[str, Any] = {"bname": building_name, "phone": phone}
+        if doc_type:
+            params["doc_type"] = doc_type
+        result = await tx.run(query, **params)
+        return [dict(r) async for r in result]
+
     async def record_sent_docs(
         self, phone: str, doc_urls: list[str]
     ) -> None:

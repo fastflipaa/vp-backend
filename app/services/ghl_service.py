@@ -111,6 +111,52 @@ async def send_message(
 
 
 @_retry_decorator
+async def send_media_message(
+    contact_id: str,
+    message: str,
+    attachment_urls: list[str],
+    channel: str = "SMS",
+) -> dict:
+    """Send a message with media attachments via GHL conversations API.
+
+    Uses the same /conversations/messages endpoint but includes an
+    ``attachments`` array so GHL delivers files inline (thumbnails in
+    WhatsApp, MMS in SMS).
+
+    Args:
+        contact_id: GHL contact ID.
+        message: Companion text for the attachments.
+        attachment_urls: List of publicly accessible URLs (R2-hosted PDFs).
+        channel: Delivery channel (SMS, WhatsApp, Email, etc.).
+
+    Returns:
+        Parsed JSON response from GHL.
+
+    Raises:
+        httpx.HTTPStatusError: On non-retryable HTTP errors.
+    """
+    client = get_ghl_client()
+    response = await client.post(
+        "/conversations/messages",
+        json={
+            "type": channel,
+            "contactId": contact_id,
+            "message": message,
+            "attachments": attachment_urls,
+        },
+    )
+    response.raise_for_status()
+    logger.info(
+        "ghl.send_media_message",
+        contact_id=contact_id,
+        channel=channel,
+        attachments=len(attachment_urls),
+        status=response.status_code,
+    )
+    return response.json()
+
+
+@_retry_decorator
 async def get_contact(contact_id: str) -> dict:
     """Fetch a contact by ID from GHL.
 
