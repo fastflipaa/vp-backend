@@ -81,6 +81,7 @@ def _enqueue_doc_delivery(
     channel: str,
     trace_id: str,
     language: str = "es",
+    request_type: str = "all",
 ) -> None:
     """Fire-and-forget: enqueue a doc delivery task for this lead.
 
@@ -89,7 +90,9 @@ def _enqueue_doc_delivery(
     """
     try:
         from app.tasks.doc_delivery_task import deliver_documents
-        deliver_documents.delay(contact_id, phone, building_name, channel, trace_id, language)
+        deliver_documents.delay(
+            contact_id, phone, building_name, channel, trace_id, language, request_type
+        )
     except Exception:
         logger.exception(
             "qualifying.doc_delivery_enqueue_failed",
@@ -549,9 +552,11 @@ class QualifyingProcessor(BaseProcessor):
             )
         if next_action == "send_docs":
             building_name = (
-                parsed.get("building_name")
+                parsed.get("matched_building")
+                or parsed.get("building_name")
                 or conversation_context.get("mostRecentBuilding", "")
             )
+            request_type = parsed.get("request_type", "all")
             _enqueue_doc_delivery(
                 contact_id=lead_data.get("contact_id", ""),
                 phone=lead_data.get("phone", ""),
@@ -559,11 +564,13 @@ class QualifyingProcessor(BaseProcessor):
                 channel=lead_data.get("channel", "SMS"),
                 trace_id=trace_id,
                 language=lead_data.get("language", "es"),
+                request_type=request_type,
             )
             logger.info(
                 "qualifying.doc_delivery_enqueued",
                 trace_id=trace_id,
                 building_name=building_name,
+                request_type=request_type,
             )
 
         # Pricing alert: if Claude deferred pricing to Fernando, notify the team
@@ -812,9 +819,11 @@ class QualifyingProcessor(BaseProcessor):
             )
         if next_action == "send_docs":
             building_name = (
-                parsed.get("building_name")
+                parsed.get("matched_building")
+                or parsed.get("building_name")
                 or conversation_context.get("mostRecentBuilding", "")
             )
+            request_type = parsed.get("request_type", "all")
             _enqueue_doc_delivery(
                 contact_id=lead_data.get("contact_id", ""),
                 phone=lead_data.get("phone", ""),
@@ -822,11 +831,13 @@ class QualifyingProcessor(BaseProcessor):
                 channel=lead_data.get("channel", "SMS"),
                 trace_id=trace_id,
                 language=lead_data.get("language", "es"),
+                request_type=request_type,
             )
             logger.info(
                 "qualifying.building_match.doc_delivery_enqueued",
                 trace_id=trace_id,
                 building_name=building_name,
+                request_type=request_type,
             )
 
         # Pricing alert for building match

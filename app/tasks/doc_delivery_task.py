@@ -51,6 +51,44 @@ _MSG_NO_DOCS_EN = (
     "Is there anything else we can help with?"
 )
 
+# Request-type-aware message templates
+_MSG_FLOORPLAN_TEMPLATE_ES = (
+    "Aqui te comparto los planos de {building_name}:"
+)
+_MSG_FLOORPLAN_TEMPLATE_EN = (
+    "Here are the floor plans for {building_name}:"
+)
+
+_MSG_PHOTOS_TEMPLATE_ES = (
+    "Aqui tienes las imagenes de {building_name}:"
+)
+_MSG_PHOTOS_TEMPLATE_EN = (
+    "Here are the images for {building_name}:"
+)
+
+_MSG_PRICING_TEMPLATE_ES = (
+    "Aqui te comparto la lista de precios de {building_name}:"
+)
+_MSG_PRICING_TEMPLATE_EN = (
+    "Here's the pricing information for {building_name}:"
+)
+
+_MSG_BROCHURE_TEMPLATE_ES = (
+    "Aqui te comparto el brochure de {building_name}:"
+)
+_MSG_BROCHURE_TEMPLATE_EN = (
+    "Here's the brochure for {building_name}:"
+)
+
+# Map request_type -> (doc_type filter for Neo4j, ES template, EN template)
+_REQUEST_TYPE_MAP: dict[str, tuple[str | None, str, str]] = {
+    "floorplan": ("floorplan", _MSG_FLOORPLAN_TEMPLATE_ES, _MSG_FLOORPLAN_TEMPLATE_EN),
+    "photos":    ("floorplan", _MSG_PHOTOS_TEMPLATE_ES, _MSG_PHOTOS_TEMPLATE_EN),
+    "pricing":   ("price_list", _MSG_PRICING_TEMPLATE_ES, _MSG_PRICING_TEMPLATE_EN),
+    "brochure":  ("brochure", _MSG_BROCHURE_TEMPLATE_ES, _MSG_BROCHURE_TEMPLATE_EN),
+    "all":       (None, _MSG_DOCS_TEMPLATE_ES, _MSG_DOCS_TEMPLATE_EN),
+}
+
 # Document name patterns to EXCLUDE (case-insensitive)
 _EXCLUDE_PATTERNS = [
     "banner",
@@ -151,6 +189,7 @@ def deliver_documents(
     channel: str,
     trace_id: str,
     language: str = "es",
+    request_type: str = "all",
 ) -> dict:
     """Fetch unsent building documents from Neo4j and deliver links via GHL.
 
@@ -161,19 +200,21 @@ def deliver_documents(
         channel: GHL delivery channel (SMS, WhatsApp, etc.).
         trace_id: Trace ID inherited from the originating process_message call.
         language: Lead's detected language (es, en, pt). Defaults to es.
+        request_type: Type of documents requested: 'floorplan', 'photos',
+                      'pricing', 'brochure', or 'all'. Defaults to 'all'.
 
     Steps:
         1. Query Neo4j for documents not yet sent to this lead.
         2. Filter: exclude banners/unbranded, pick language-matched brochure.
         3. If none found: send polite "not available" message.
-        4. If found: format and send PDF links via GHL.
+        4. If found: send as media attachments via GHL (text fallback on error).
         5. Record :SENT_DOCUMENT relationships in Neo4j.
     """
 
     async def _run() -> dict:
         from app.repositories.base import close_driver, get_driver
         from app.repositories.building_repository import BuildingRepository
-        from app.services.ghl_service import send_message
+        from app.services.ghl_service import send_media_message, send_message
 
         driver = None
         try:
@@ -182,16 +223,28 @@ def deliver_documents(
 
             # Step 1: Fetch unsent documents for this building + lead
             try:
-                docs = await building_repo.get_unsent_docs_by_name(
-                    phone=phone,
-                    building_name=building_name,
-                )
+                # Resolve doc_type filter from request_type
+                type_config = _REQUEST_TYPE_MAP.get(request_type, _REQUEST_TYPE_MAP["all"])
+                doc_type_filter = type_config[0]
+
+                if doc_type_filter:
+                    docs = await building_repo.get_unsent_docs_by_name_and_type(
+                        phone=phone,
+                        building_name=building_name,
+                        doc_type=doc_type_filter,
+                    )
+                else:
+                    docs = await building_repo.get_unsent_docs_by_name(
+                        phone=phone,
+                        building_name=building_name,
+                    )
             except Exception:
                 logger.exception(
                     "doc_delivery.neo4j_lookup_failed",
                     trace_id=trace_id,
                     contact_id=contact_id,
                     building_name=building_name,
+                    request_type=request_type,
                 )
                 docs = []
 
@@ -206,47 +259,94 @@ def deliver_documents(
                 building_name=building_name,
                 count=len(docs),
                 language=language,
+                request_type=request_type,
             )
 
             # Step 3: Compose message
             is_english = language.startswith("en")
+            type_config = _REQUEST_TYPE_MAP.get(request_type, _REQUEST_TYPE_MAP["all"])
+            _, template_es, template_en = type_config
+
             if not docs:
                 message_text = _MSG_NO_DOCS_EN if is_english else _MSG_NO_DOCS_ES
+                attachment_urls: list[str] = []
                 logger.info(
                     "doc_delivery.no_docs_available",
                     trace_id=trace_id,
                     building_name=building_name,
+                    request_type=request_type,
                 )
             else:
-                doc_lines = "\n".join(
-                    f"📄 {doc.get('name', 'Document')}: {doc.get('url', '')}"
-                    for doc in docs
-                    if doc.get("url")
-                )
-                if not doc_lines:
+                # Collect attachment URLs for media message
+                attachment_urls = [
+                    doc["url"] for doc in docs if doc.get("url")
+                ]
+                template = template_en if is_english else template_es
+                message_text = template.format(building_name=building_name)
+
+                # If no valid URLs, fall back to no-docs message
+                if not attachment_urls:
                     message_text = _MSG_NO_DOCS_EN if is_english else _MSG_NO_DOCS_ES
                     docs = []
-                else:
-                    template = _MSG_DOCS_TEMPLATE_EN if is_english else _MSG_DOCS_TEMPLATE_ES
-                    message_text = template.format(
-                        building_name=building_name,
-                        doc_lines=doc_lines,
-                    )
 
-            # Step 4: Send via GHL
+            # Step 4: Send via GHL — try media attachments first, text fallback
             try:
-                await send_message(
-                    contact_id=contact_id,
-                    message=message_text,
-                    channel=channel,
-                )
-                logger.info(
-                    "doc_delivery.message_sent",
-                    trace_id=trace_id,
-                    contact_id=contact_id,
-                    channel=channel,
-                    docs_count=len(docs),
-                )
+                if attachment_urls:
+                    # Try media message with inline attachments
+                    try:
+                        await send_media_message(
+                            contact_id=contact_id,
+                            message=message_text,
+                            attachment_urls=attachment_urls,
+                            channel=channel,
+                        )
+                        logger.info(
+                            "doc_delivery.media_message_sent",
+                            trace_id=trace_id,
+                            contact_id=contact_id,
+                            channel=channel,
+                            docs_count=len(docs),
+                            request_type=request_type,
+                        )
+                    except Exception:
+                        # Media send failed — fall back to text-only with URLs
+                        logger.warning(
+                            "doc_delivery.media_send_failed_falling_back_to_text",
+                            trace_id=trace_id,
+                            contact_id=contact_id,
+                        )
+                        doc_lines = "\n".join(
+                            f"\U0001f4c4 {doc.get('name', 'Document')}: {doc.get('url', '')}"
+                            for doc in docs
+                            if doc.get("url")
+                        )
+                        fallback_template = _MSG_DOCS_TEMPLATE_EN if is_english else _MSG_DOCS_TEMPLATE_ES
+                        fallback_text = fallback_template.format(
+                            building_name=building_name,
+                            doc_lines=doc_lines,
+                        )
+                        await send_message(
+                            contact_id=contact_id,
+                            message=fallback_text,
+                            channel=channel,
+                        )
+                        logger.info(
+                            "doc_delivery.text_fallback_sent",
+                            trace_id=trace_id,
+                            contact_id=contact_id,
+                        )
+                else:
+                    # No attachments (no-docs message) — send as plain text
+                    await send_message(
+                        contact_id=contact_id,
+                        message=message_text,
+                        channel=channel,
+                    )
+                    logger.info(
+                        "doc_delivery.no_docs_message_sent",
+                        trace_id=trace_id,
+                        contact_id=contact_id,
+                    )
             except Exception:
                 logger.exception(
                     "doc_delivery.ghl_send_failed",
@@ -287,6 +387,7 @@ def deliver_documents(
                 "building_name": building_name,
                 "docs_sent": len(docs),
                 "language": language,
+                "request_type": request_type,
             }
 
         finally:
