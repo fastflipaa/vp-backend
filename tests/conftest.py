@@ -36,6 +36,7 @@ def pytest_configure(config):
         "GHL_LOCATION_ID": "test-location-id",
         # Optional but explicit for deterministic tests
         "SLACK_WEBHOOK_URL": "",
+        "OPENAI_API_KEY": "test-openai-key-not-real",
         "CANARY_ENABLED": "false",
         "CANARY_TAG": "v3-canary",
     }
