@@ -176,7 +176,7 @@ def lead_operator_sweep() -> dict:
 async def _query_orphan_leads(driver) -> list[dict]:
     """Query orphan leads (NULL current_state) from Neo4j.
 
-    Returns up to 50 leads that have no current_state and haven't been
+    Returns up to BATCH_LIMIT leads that have no current_state and haven't been
     synced by the operator in the last 7 days.
     """
     query = """
@@ -189,7 +189,7 @@ async def _query_orphan_leads(driver) -> list[dict]:
            l.phone AS phone,
            l.name AS name
     ORDER BY l.createdAt DESC
-    LIMIT 50
+    LIMIT 10
     """
     async with driver.session() as session:
         result = await session.run(query)
