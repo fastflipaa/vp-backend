@@ -160,6 +160,7 @@ class HandoffProcessor(BaseProcessor):
             context_summary = await self._claude.generate(
                 system_prompt=system_prompt,
                 user_message=user_message,
+                conversation_history=conversation_context.get("structured_turns"),
                 model=config.get("model", "claude-sonnet-4-20250514"),
                 max_tokens=config.get("max_tokens", 200),
             )

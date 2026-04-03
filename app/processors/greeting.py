@@ -156,8 +156,10 @@ class GreetingProcessor(BaseProcessor):
             "channel": lead_data.get("channel", "whatsapp"),
             "message": message,
             "is_auto_trigger": is_auto_trigger,
-            "ghl_conversation_context": conversation_context.get(
-                "ghlConversationContext", ""
+            "ghl_conversation_context": (
+                "(see conversation history in messages)"
+                if conversation_context.get("structured_turns")
+                else conversation_context.get("ghlConversationContext", "")
             ),
             "crm_context": json.dumps(enriched_context) if enriched_context else "",
             "cross_session_memory": json.dumps(memory) if memory else "",
@@ -182,6 +184,7 @@ class GreetingProcessor(BaseProcessor):
             response = await self._claude.generate(
                 system_prompt=system_prompt,
                 user_message=user_message,
+                conversation_history=conversation_context.get("structured_turns"),
                 model=config.get("model", "claude-sonnet-4-20250514"),
                 max_tokens=max_tokens,
             )

@@ -461,8 +461,10 @@ class QualifyingProcessor(BaseProcessor):
             "known_items": known_items,
             "broker_aware": broker_aware,
             "building_context": building_context,
-            "ghl_conversation_context": conversation_context.get(
-                "ghlConversationContext", ""
+            "ghl_conversation_context": (
+                "(see conversation history in messages)"
+                if conversation_context.get("structured_turns")
+                else conversation_context.get("ghlConversationContext", "")
             ),
             "most_recent_building": conversation_context.get(
                 "mostRecentBuilding", ""
@@ -502,6 +504,7 @@ class QualifyingProcessor(BaseProcessor):
             response_text = await self._claude.generate(
                 system_prompt=system_prompt,
                 user_message=user_message,
+                conversation_history=conversation_context.get("structured_turns"),
                 model=config.get("model", "claude-sonnet-4-20250514"),
                 max_tokens=max_tokens,
             )
@@ -741,8 +744,10 @@ class QualifyingProcessor(BaseProcessor):
             "qual_context": qual_context,
             "known_items": known_items,
             "broker_aware": False,
-            "ghl_conversation_context": conversation_context.get(
-                "ghlConversationContext", ""
+            "ghl_conversation_context": (
+                "(see conversation history in messages)"
+                if conversation_context.get("structured_turns")
+                else conversation_context.get("ghlConversationContext", "")
             ),
             "most_recent_building": conversation_context.get(
                 "mostRecentBuilding", ""
@@ -773,6 +778,7 @@ class QualifyingProcessor(BaseProcessor):
             response_text = await self._claude.generate(
                 system_prompt=system_prompt,
                 user_message=user_message,
+                conversation_history=conversation_context.get("structured_turns"),
                 model=config.get("model", "claude-sonnet-4-20250514"),
                 max_tokens=max_tokens,
             )
