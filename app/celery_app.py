@@ -33,6 +33,8 @@ import app.tasks.scheduled.conversation_quality_scan  # noqa: F401, E402
 import app.tasks.scheduled.system_health_scan  # noqa: F401, E402
 import app.tasks.scheduled.lead_operator  # noqa: F401, E402
 import app.tasks.scheduled.conversation_scorer  # noqa: F401, E402
+import app.tasks.scheduled.lesson_lifecycle  # noqa: F401, E402
+import app.tasks.scheduled.learning_report  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -104,5 +106,13 @@ celery_app.conf.beat_schedule = {
     "conversation-scorer-30min": {
         "task": "scheduled.conversation_scorer",
         "schedule": crontab(minute="*/30"),
+    },
+    "lesson-lifecycle-daily-3am": {
+        "task": "scheduled.lesson_lifecycle",
+        "schedule": crontab(hour=3, minute=0),  # 3:00 AM CDMX
+    },
+    "learning-report-weekly-mon-9am": {
+        "task": "scheduled.learning_report",
+        "schedule": crontab(hour=9, minute=0, day_of_week=1),  # Monday 9 AM CDMX
     },
 }
