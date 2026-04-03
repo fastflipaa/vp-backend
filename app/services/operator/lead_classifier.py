@@ -13,6 +13,7 @@ Cost: ~$0.001 per lead for Haiku classification.
 from __future__ import annotations
 
 import json
+import re
 
 import redis
 import structlog
@@ -32,23 +33,19 @@ VALID_STATES = {
     "CLOSED",
 }
 
-SYSTEM_PROMPT = """You are a lead classification agent for Vive Polanco, a luxury real estate company in Mexico City.
-Analyze the conversation history and context to determine:
-1. What conversation state this lead should be in
-2. The lead's sentiment
-3. Whether this lead is worth pursuing
+SYSTEM_PROMPT = """You classify leads for Vive Polanco, a luxury real estate company in Mexico City.
 
-Valid states (choose exactly one):
-- GREETING: No meaningful conversation yet, or only initial contact
-- QUALIFYING: Lead has shown interest, needs qualification (budget, timeline, preferences)
-- SCHEDULING: Lead is qualified and ready to schedule a viewing/appointment
-- FOLLOW_UP: Lead was engaged but went quiet, needs a follow-up nudge
-- NON_RESPONSIVE: Lead has been contacted multiple times with no response
-- BROKER: Lead is a real estate broker/agent, not an end buyer
-- CLOSED: Lead explicitly said not interested, or is clearly not a prospect
+States (pick one):
+GREETING = No real conversation yet
+QUALIFYING = Lead showed interest, needs budget/timeline/preferences
+SCHEDULING = Qualified, ready for viewing appointment
+FOLLOW_UP = Was engaged but went quiet
+NON_RESPONSIVE = Contacted multiple times, no reply
+BROKER = Real estate broker, not end buyer
+CLOSED = Said not interested or clearly not a prospect
 
-Respond in JSON only:
-{"state": "STATE_NAME", "sentiment": "positive|neutral|negative", "worth_pursuing": true|false, "reason": "brief explanation"}"""
+Output ONLY this JSON, nothing else:
+{"state":"STATE","sentiment":"positive|neutral|negative","worth_pursuing":true,"reason":"brief"}"""
 
 
 class LeadClassifier:
@@ -136,10 +133,21 @@ class LeadClassifier:
                 system_prompt=SYSTEM_PROMPT,
                 user_message=user_message,
                 model="claude-haiku-4-5-20251001",
-                max_tokens=150,
+                max_tokens=256,
             )
 
-            result = json.loads(response_text.strip())
+            # Strip markdown code blocks if present
+            cleaned = response_text.strip()
+            code_block = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+            if code_block:
+                cleaned = code_block.group(1)
+            # Also try to extract raw JSON object
+            elif not cleaned.startswith("{"):
+                json_match = re.search(r"\{[^{}]*\}", cleaned)
+                if json_match:
+                    cleaned = json_match.group(0)
+
+            result = json.loads(cleaned)
 
             state = result.get("state", "GREETING")
             if state not in VALID_STATES:

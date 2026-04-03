@@ -84,6 +84,15 @@ class GHLSyncService:
             if matched:
                 buildings_matched.extend(matched)
 
+        # Also match buildings from conversation content
+        if messages:
+            all_text = " ".join(
+                str(m.get("body", "") or "") for m in messages[:10]
+            )
+            if all_text.strip():
+                text_buildings = await self.match_buildings_from_text(all_text)
+                buildings_matched.extend(text_buildings)
+
         # Deduplicate matched buildings by building_id
         seen_ids: set[str] = set()
         unique_buildings: list[dict] = []
@@ -137,7 +146,7 @@ class GHLSyncService:
         }
 
     async def _match_building_by_tag(self, tag: str) -> list[dict]:
-        """Match a GHL tag against Building nodes using case-insensitive CONTAINS."""
+        """Match a GHL tag against Building nodes using bidirectional CONTAINS."""
         async with self._driver.session() as session:
             result = await session.execute_read(self._match_building_tx, tag)
             return result
@@ -148,9 +157,28 @@ class GHLSyncService:
             """
             MATCH (b:Building)
             WHERE toLower(b.name) CONTAINS toLower($tag)
+               OR toLower($tag) CONTAINS toLower(b.name)
             RETURN b.name AS name, b.building_id AS building_id
             """,
             tag=tag,
+        )
+        return [dict(record) async for record in result]
+
+    async def match_buildings_from_text(self, text: str) -> list[dict]:
+        """Extract building mentions from conversation text against Neo4j Building nodes."""
+        async with self._driver.session() as session:
+            result = await session.execute_read(self._match_buildings_in_text_tx, text)
+            return result
+
+    @staticmethod
+    async def _match_buildings_in_text_tx(tx, text: str) -> list[dict]:
+        result = await tx.run(
+            """
+            MATCH (b:Building)
+            WHERE toLower($text) CONTAINS toLower(b.name)
+            RETURN DISTINCT b.name AS name, b.building_id AS building_id
+            """,
+            text=text,
         )
         return [dict(record) async for record in result]
 
