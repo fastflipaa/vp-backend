@@ -662,6 +662,115 @@ class LearningRepository:
         return [dict(r) async for r in result]
 
     # ------------------------------------------------------------------
+    # Building error history
+    # ------------------------------------------------------------------
+
+    async def get_building_error_history(
+        self,
+        building_id: str,
+        days: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Get AgentError nodes linked to a building in the last N days."""
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_building_error_history_tx, building_id, days
+            )
+        return result
+
+    @staticmethod
+    async def _get_building_error_history_tx(
+        tx,
+        building_id: str,
+        days: int,
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (e:AgentError)-[:RELATES_TO|HAS_ERROR]-(l:Lead)-[:INTERESTED_IN]->(b:Building {building_id: $bid})
+            WHERE e.created_at >= datetime() - duration({days: $days})
+            RETURN e.type AS type, e.details AS details,
+                   e.severity AS severity, e.created_at AS created_at
+            ORDER BY e.created_at DESC
+            LIMIT 10
+            """,
+            bid=building_id,
+            days=days,
+        )
+        return [dict(r) async for r in result]
+
+    # ------------------------------------------------------------------
+    # Lesson-error links for conversations
+    # ------------------------------------------------------------------
+
+    async def get_lessons_for_conversation_errors(
+        self,
+        conversation_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        """Get LessonLearned nodes linked via FIXED_BY from AgentErrors on these conversations."""
+        if not conversation_ids:
+            return []
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_lessons_for_conversation_errors_tx, conversation_ids
+            )
+        return result
+
+    @staticmethod
+    async def _get_lessons_for_conversation_errors_tx(
+        tx,
+        conversation_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (e:AgentError)-[:FIXED_BY]->(ll:LessonLearned)
+            WHERE e.conversation_id IN $cids
+              AND ll.status IN ['approved', 'evergreen']
+            RETURN DISTINCT ll.id AS id, ll.rule AS rule, ll.why AS why,
+                   ll.confidence AS confidence,
+                   e.type AS error_type, e.details AS error_details
+            LIMIT 5
+            """,
+            cids=conversation_ids,
+        )
+        return [dict(r) async for r in result]
+
+    # ------------------------------------------------------------------
+    # Lesson queries by status (admin endpoints)
+    # ------------------------------------------------------------------
+
+    async def get_lessons_by_status(
+        self,
+        statuses: list[str],
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Get LessonLearned nodes filtered by status list."""
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_lessons_by_status_tx, statuses, limit
+            )
+        return result
+
+    @staticmethod
+    async def _get_lessons_by_status_tx(
+        tx,
+        statuses: list[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (ll:LessonLearned)
+            WHERE ll.status IN $statuses
+            RETURN ll.id AS id, ll.rule AS rule, ll.why AS why,
+                   ll.severity AS severity, ll.confidence AS confidence,
+                   ll.status AS status, ll.created_at AS created_at
+            ORDER BY ll.created_at DESC
+            LIMIT $lim
+            """,
+            statuses=statuses,
+            lim=limit,
+        )
+        return [dict(r) async for r in result]
+
+    # ------------------------------------------------------------------
     # Lesson lifecycle
     # ------------------------------------------------------------------
 
