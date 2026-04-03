@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # Optional
     SLACK_WEBHOOK_URL: str = ""
+    OPENAI_API_KEY: str = ""
 
     # Canary mode (Phase 17)
     CANARY_TAG: str = "v3-canary"

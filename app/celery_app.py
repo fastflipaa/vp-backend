@@ -32,6 +32,7 @@ import app.tasks.doc_delivery_task  # noqa: F401, E402
 import app.tasks.scheduled.conversation_quality_scan  # noqa: F401, E402
 import app.tasks.scheduled.system_health_scan  # noqa: F401, E402
 import app.tasks.scheduled.lead_operator  # noqa: F401, E402
+import app.tasks.scheduled.conversation_scorer  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -99,5 +100,9 @@ celery_app.conf.beat_schedule = {
     "lead-operator-sweep-3h": {
         "task": "scheduled.lead_operator_sweep",
         "schedule": crontab(minute=30, hour="*/3"),  # Every 3 hours at :30
+    },
+    "conversation-scorer-30min": {
+        "task": "scheduled.conversation_scorer",
+        "schedule": crontab(minute="*/30"),
     },
 }

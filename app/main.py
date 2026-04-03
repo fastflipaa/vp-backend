@@ -20,6 +20,21 @@ app.include_router(webhooks_router)
 app.include_router(canary_router)
 
 
+@app.on_event("startup")
+async def startup_learning_schema():
+    """Run learning schema migration on first startup."""
+    try:
+        from app.repositories.base import get_driver
+        from app.migrations.learning_schema import run_learning_schema_migration
+
+        driver = await get_driver()
+        await run_learning_schema_migration(driver)
+    except Exception:
+        import structlog
+
+        structlog.get_logger().exception("learning_schema_migration.startup_failed")
+
+
 @app.get("/health")
 async def health():
     """Liveness probe -- no external dependencies."""
