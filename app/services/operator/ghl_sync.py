@@ -41,11 +41,11 @@ class GHLSyncService:
         contact = contact_response.get("contact", contact_response)
 
         name = f"{contact.get('firstName', '')} {contact.get('lastName', '')}".strip()
-        email = contact.get("email", "")
-        contact_phone = contact.get("phone", phone)
+        email = str(contact.get("email", "") or "")
+        contact_phone = str(contact.get("phone", phone) or phone or "")
         tags = contact.get("tags", []) or []
-        date_added = contact.get("dateAdded", "")
-        source = contact.get("source", "")
+        date_added = str(contact.get("dateAdded", "") or "")
+        source = str(contact.get("source", "") or "")
 
         # 2. Search for conversation and get messages (fail-open)
         messages: list[dict] = []
@@ -222,7 +222,7 @@ class GHLSyncService:
             direction = msg.get("direction", "")
             role = "user" if direction == "inbound" else "assistant"
             content = msg.get("body", msg.get("message", ""))
-            channel = (msg.get("type", "sms") or "sms").lower()
+            channel = str(msg.get("type", "sms") or "sms").lower()
             created_at = msg.get("dateAdded", "")
 
             # Build unique key: ghl_message_id if available, else content+created_at hash
