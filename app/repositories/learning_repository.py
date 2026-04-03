@@ -831,3 +831,230 @@ class LearningRepository:
         )
         record = await result.single()
         return record is not None
+
+    # ------------------------------------------------------------------
+    # Lesson existence check (semantic dedup)
+    # ------------------------------------------------------------------
+
+    async def check_lesson_exists_for_pattern(self, pattern_name: str) -> bool:
+        """Check if any active LessonLearned has a rule containing the pattern name."""
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._check_lesson_exists_for_pattern_tx, pattern_name
+            )
+        return result
+
+    @staticmethod
+    async def _check_lesson_exists_for_pattern_tx(tx, pattern_name: str) -> bool:
+        result = await tx.run(
+            """
+            MATCH (ll:LessonLearned)
+            WHERE ll.rule CONTAINS $pattern_name
+              AND ll.status IN ['candidate', 'approved', 'evergreen']
+            RETURN count(ll) > 0 AS exists
+            """,
+            pattern_name=pattern_name,
+        )
+        record = await result.single()
+        return record["exists"] if record else False
+
+    # ------------------------------------------------------------------
+    # Outcome averages for effectiveness tracking
+    # ------------------------------------------------------------------
+
+    async def get_outcome_averages(self, days: int) -> dict:
+        """Return AVG scores for ConversationOutcome nodes created in last N days.
+
+        Returns {"repetition": float, "sentiment": float, "intent_alignment": float, "count": int}.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_outcome_averages_tx, days
+            )
+        return result
+
+    @staticmethod
+    async def _get_outcome_averages_tx(tx, days: int) -> dict:
+        result = await tx.run(
+            """
+            MATCH (o:ConversationOutcome)
+            WHERE o.created_at >= datetime() - duration({days: $days})
+            RETURN o.scores AS scores
+            """,
+            days=days,
+        )
+        records = [r async for r in result]
+
+        if not records:
+            return {"repetition": 0.0, "sentiment": 0.0, "intent_alignment": 0.0, "count": 0}
+
+        totals = {"repetition": 0.0, "sentiment": 0.0, "intent_alignment": 0.0}
+        count = 0
+        for record in records:
+            scores_raw = record.get("scores", "{}")
+            try:
+                scores = json.loads(scores_raw) if isinstance(scores_raw, str) else scores_raw
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(scores, dict):
+                continue
+            count += 1
+            for key in totals:
+                totals[key] += float(scores.get(key, 0.0))
+
+        if count == 0:
+            return {"repetition": 0.0, "sentiment": 0.0, "intent_alignment": 0.0, "count": 0}
+
+        return {
+            "repetition": round(totals["repetition"] / count, 4),
+            "sentiment": round(totals["sentiment"] / count, 4),
+            "intent_alignment": round(totals["intent_alignment"] / count, 4),
+            "count": count,
+        }
+
+    # ------------------------------------------------------------------
+    # Lesson injection count (proxy)
+    # ------------------------------------------------------------------
+
+    async def get_lesson_injection_count(self, days: int) -> int:
+        """Count ConversationOutcome nodes from last N days (proxy for injection opportunities)."""
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_lesson_injection_count_tx, days
+            )
+        return result
+
+    @staticmethod
+    async def _get_lesson_injection_count_tx(tx, days: int) -> int:
+        result = await tx.run(
+            """
+            MATCH (o:ConversationOutcome)
+            WHERE o.created_at >= datetime() - duration({days: $days})
+            RETURN count(o) AS cnt
+            """,
+            days=days,
+        )
+        record = await result.single()
+        return record["cnt"] if record else 0
+
+    # ------------------------------------------------------------------
+    # Archive low confidence candidates
+    # ------------------------------------------------------------------
+
+    async def archive_low_confidence(self) -> int:
+        """Archive candidate lessons with confidence <= 0.1. Returns count affected."""
+        async with self._driver.session() as session:
+            result = await session.execute_write(
+                self._archive_low_confidence_tx
+            )
+        logger.info("learning.low_confidence_archived", affected=result)
+        return result
+
+    @staticmethod
+    async def _archive_low_confidence_tx(tx) -> int:
+        result = await tx.run(
+            """
+            MATCH (ll:LessonLearned)
+            WHERE ll.confidence <= 0.1 AND ll.status = 'candidate'
+            SET ll.status = 'archived'
+            RETURN count(ll) AS affected
+            """,
+        )
+        record = await result.single()
+        return record["affected"] if record else 0
+
+    # ------------------------------------------------------------------
+    # Auto-promote mature candidates
+    # ------------------------------------------------------------------
+
+    async def auto_promote_candidates(
+        self,
+        min_confidence: float = 0.7,
+        min_age_days: int = 7,
+    ) -> list[str]:
+        """Promote mature high-confidence candidates to approved. Returns list of promoted IDs."""
+        async with self._driver.session() as session:
+            result = await session.execute_write(
+                self._auto_promote_candidates_tx, min_confidence, min_age_days
+            )
+        if result:
+            logger.info("learning.candidates_auto_promoted", count=len(result))
+        return result
+
+    @staticmethod
+    async def _auto_promote_candidates_tx(
+        tx, min_confidence: float, min_age_days: int
+    ) -> list[str]:
+        result = await tx.run(
+            """
+            MATCH (ll:LessonLearned)
+            WHERE ll.status = 'candidate'
+              AND ll.confidence >= $min_conf
+              AND ll.created_at < datetime() - duration({days: $min_days})
+            SET ll.status = 'approved'
+            RETURN ll.id AS id
+            """,
+            min_conf=min_confidence,
+            min_days=min_age_days,
+        )
+        return [r["id"] async for r in result]
+
+    # ------------------------------------------------------------------
+    # Cleanup stale embeddings
+    # ------------------------------------------------------------------
+
+    async def cleanup_old_embeddings(self, days: int = 180) -> int:
+        """Delete ConversationEmbedding nodes older than N days. Returns count deleted."""
+        async with self._driver.session() as session:
+            result = await session.execute_write(
+                self._cleanup_old_embeddings_tx, days
+            )
+        logger.info("learning.old_embeddings_cleaned", deleted=result)
+        return result
+
+    @staticmethod
+    async def _cleanup_old_embeddings_tx(tx, days: int) -> int:
+        # Two-step: count first, then delete
+        result = await tx.run(
+            """
+            MATCH (ce:ConversationEmbedding)
+            WHERE ce.created_at < datetime() - duration({days: $days})
+            WITH collect(ce) AS nodes, count(ce) AS cnt
+            UNWIND nodes AS ce
+            DETACH DELETE ce
+            RETURN cnt
+            """,
+            days=days,
+        )
+        record = await result.single()
+        return record["cnt"] if record else 0
+
+    # ------------------------------------------------------------------
+    # Cleanup rejected lessons
+    # ------------------------------------------------------------------
+
+    async def cleanup_rejected_lessons(self, days: int = 30) -> int:
+        """Delete rejected LessonLearned nodes older than N days. Returns count deleted."""
+        async with self._driver.session() as session:
+            result = await session.execute_write(
+                self._cleanup_rejected_lessons_tx, days
+            )
+        logger.info("learning.rejected_lessons_cleaned", deleted=result)
+        return result
+
+    @staticmethod
+    async def _cleanup_rejected_lessons_tx(tx, days: int) -> int:
+        result = await tx.run(
+            """
+            MATCH (ll:LessonLearned)
+            WHERE ll.status = 'rejected'
+              AND ll.created_at < datetime() - duration({days: $days})
+            WITH collect(ll) AS nodes, count(ll) AS cnt
+            UNWIND nodes AS ll
+            DETACH DELETE ll
+            RETURN cnt
+            """,
+            days=days,
+        )
+        record = await result.single()
+        return record["cnt"] if record else 0
