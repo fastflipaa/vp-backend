@@ -76,6 +76,8 @@ class ClaudeService:
         self,
         system_prompt: str,
         user_message: str,
+        *,
+        conversation_history: list[dict] | None = None,
         model: str = "claude-sonnet-4-20250514",
         max_tokens: int = 1024,
     ) -> str:
@@ -84,6 +86,10 @@ class ClaudeService:
         Args:
             system_prompt: The system prompt string.
             user_message: The user message string.
+            conversation_history: Optional list of prior conversation turns
+                as ``{"role": "user"|"assistant", "content": str}`` dicts.
+                When provided, these are prepended to the current user message
+                to give Claude multi-turn context.
             model: Claude model ID (default: Sonnet).
             max_tokens: Max tokens in response.
 
@@ -113,12 +119,24 @@ class ClaudeService:
 
         start = time.monotonic()
         try:
+            # Build messages: optional history + current user message
+            if conversation_history:
+                messages = list(conversation_history) + [{"role": "user", "content": user_message}]
+                # Safety: cap at 20 messages (10 turns) to control token usage
+                if len(messages) > 20:
+                    messages = messages[-20:]
+                # Ensure first message is role="user" (Claude API requirement)
+                if messages and messages[0]["role"] != "user":
+                    messages = messages[1:]
+            else:
+                messages = [{"role": "user", "content": user_message}]
+
             client = get_claude_client()
             message = await client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
                 system=effective_system,
-                messages=[{"role": "user", "content": user_message}],
+                messages=messages,
             )
 
             duration_ms = int((time.monotonic() - start) * 1000)

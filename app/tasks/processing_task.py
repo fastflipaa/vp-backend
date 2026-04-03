@@ -200,6 +200,8 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 return {"status": "skipped", "reason": f"human_active:{human_reason}"}
             # After is_human_active, the detector caches the fetched messages
             conversation_ctx = human_detector.get_conversation_context()
+            # Add structured conversation turns for Claude multi-turn API
+            conversation_ctx["structured_turns"] = human_detector.get_structured_turns()
         except Exception:
             logger.exception("human_check_failed", trace_id=trace_id)
             # Fail-open: proceed without human check

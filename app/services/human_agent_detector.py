@@ -219,6 +219,64 @@ class HumanAgentDetector:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def get_structured_turns(self) -> list[dict]:
+        """Convert cached GHL messages to Claude-compatible conversation turns.
+
+        Maps GHL direction to Claude roles:
+        - direction="inbound" -> role="user" (lead message)
+        - direction="outbound" -> role="assistant" (bot response)
+
+        Filters out:
+        - Messages with empty/null body
+        - Human agent messages (outbound from non-bot sources within agent_window)
+
+        Returns messages in chronological order (oldest first), capped at 10,
+        each body truncated to 500 chars.
+        """
+        if not self._last_messages:
+            return []
+
+        turns: list[dict] = []
+        for msg in self._last_messages:
+            body = (msg.get("body") or "").strip()
+            if not body:
+                continue
+
+            direction = (msg.get("direction") or "").lower()
+            source = (msg.get("source") or "").lower()
+
+            # Skip human agent messages (outbound from non-bot, non-empty source)
+            if direction == "outbound" and source and source not in BOT_SOURCES:
+                continue
+
+            if direction == "inbound":
+                turns.append({"role": "user", "content": body[:500]})
+            elif direction == "outbound":
+                turns.append({"role": "assistant", "content": body[:500]})
+
+        # GHL returns most-recent-first; Claude needs oldest-first
+        turns.reverse()
+
+        # Cap at 10 messages
+        turns = turns[-10:]
+
+        # Merge consecutive same-role messages (Claude API rejects adjacent same-role)
+        if not turns:
+            return turns
+
+        merged: list[dict] = [turns[0]]
+        for turn in turns[1:]:
+            if turn["role"] == merged[-1]["role"]:
+                merged[-1]["content"] += "\n" + turn["content"]
+            else:
+                merged.append(turn)
+
+        return merged
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _parse_timestamp(ts: str) -> datetime | None:
         """Parse a GHL timestamp string to a timezone-aware datetime."""
