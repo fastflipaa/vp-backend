@@ -437,12 +437,14 @@ class LeadRepository:
         return [dict(record) async for record in result]
 
     async def find_followup_due(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Find leads needing a follow-up nudge.
+        """Find leads in FOLLOW_UP state needing their next follow-up nudge.
 
-        Includes leads in FOLLOW_UP or QUALIFYING state whose last
-        interaction was more than 24 hours ago but less than 30 days.
-        Leads silent for over 30 days are handled by the stale
-        re-engagement COLD tier instead.
+        Queries only FOLLOW_UP state leads (not QUALIFYING -- those are
+        handled by the stale re-engagement task). Uses a 20-hour minimum
+        window for compatibility with per-lead jitter (20-28h).
+
+        Returns followup_count so the scheduler can do exhaustion checks
+        without a separate query.
         """
         async with self._driver.session() as session:
             results = await session.execute_read(
@@ -459,9 +461,9 @@ class LeadRepository:
         result = await tx.run(
             """
             MATCH (l:Lead)-[:HAS_INTERACTION]->(i:Interaction)
-            WHERE l.current_state IN ['FOLLOW_UP', 'QUALIFYING']
+            WHERE l.current_state = 'FOLLOW_UP'
             WITH l, max(i.created_at) AS last_interaction
-            WHERE last_interaction < datetime() - duration({hours: 24})
+            WHERE last_interaction < datetime() - duration({hours: 20})
             AND last_interaction > datetime() - duration({days: 7})
             AND NOT EXISTS {
               MATCH (l)-[:HAS_RECOVERY]->(r:RecoveryAttempt)
@@ -470,12 +472,128 @@ class LeadRepository:
             RETURN l.ghl_contact_id AS contact_id,
                    l.phone AS phone,
                    l.name AS name,
-                   l.language AS language
+                   l.language AS language,
+                   coalesce(l.followup_count, 0) AS followup_count
             LIMIT $limit
             """,
             limit=limit,
         )
         return [dict(record) async for record in result]
+
+    # --- Follow-up counter ---
+
+    async def increment_followup_count(self, contact_id: str) -> int:
+        """Increment the follow-up counter on a Lead node.
+
+        Uses MERGE so the Lead node is created if it does not exist.
+        Also updates ``last_followup_at`` for timing queries.
+
+        Returns the new followup_count after increment.
+        """
+        async with self._driver.session() as session:
+            new_count = await session.execute_write(
+                self._increment_followup_count_tx, contact_id
+            )
+            logger.info(
+                "followup_count_incremented",
+                contact_id=contact_id,
+                new_count=new_count,
+            )
+            return new_count
+
+    @staticmethod
+    async def _increment_followup_count_tx(tx, contact_id: str) -> int:
+        result = await tx.run(
+            """
+            MERGE (l:Lead {ghl_contact_id: $cid})
+            SET l.followup_count = coalesce(l.followup_count, 0) + 1,
+                l.last_followup_at = datetime(),
+                l.updatedAt = datetime()
+            RETURN l.followup_count AS followup_count
+            """,
+            cid=contact_id,
+        )
+        record = await result.single()
+        return record["followup_count"] if record else 1
+
+    async def reset_followup_count(self, contact_id: str) -> None:
+        """Reset the follow-up counter to 0 (e.g. when a lead replies).
+
+        Mid-sequence reply resets the counter so the lead earns 3 new
+        follow-up attempts if they go silent again.
+        """
+        async with self._driver.session() as session:
+            await session.execute_write(
+                self._reset_followup_count_tx, contact_id
+            )
+            logger.info("followup_count_reset", contact_id=contact_id)
+
+    @staticmethod
+    async def _reset_followup_count_tx(tx, contact_id: str) -> None:
+        await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            SET l.followup_count = 0,
+                l.last_followup_at = null,
+                l.updatedAt = datetime()
+            """,
+            cid=contact_id,
+        )
+
+    async def get_followup_data(self, contact_id: str) -> dict[str, Any]:
+        """Fetch follow-up data for a lead: count, buildings, language, last AI message.
+
+        Returns a dict with followup_count (defaults to 0), building_names,
+        language, name, phone, last_followup_at, and last_ai_message.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_followup_data_tx, contact_id
+            )
+            logger.debug("followup_data_read", contact_id=contact_id)
+            return result
+
+    @staticmethod
+    async def _get_followup_data_tx(tx, contact_id: str) -> dict[str, Any]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            OPTIONAL MATCH (l)-[:INTERESTED_IN]->(b:Building)
+            WITH l, collect(b.name) AS building_names
+            OPTIONAL MATCH (l)-[:HAS_INTERACTION]->(i:Interaction {role: 'assistant'})
+            WITH l, building_names, i
+            ORDER BY i.created_at DESC
+            LIMIT 1
+            RETURN coalesce(l.followup_count, 0) AS followup_count,
+                   l.last_followup_at AS last_followup_at,
+                   l.language AS language,
+                   l.name AS name,
+                   l.phone AS phone,
+                   building_names,
+                   i.content AS last_ai_message
+            """,
+            cid=contact_id,
+        )
+        record = await result.single()
+        if not record:
+            return {
+                "followup_count": 0,
+                "last_followup_at": None,
+                "language": "es",
+                "name": "",
+                "phone": "",
+                "building_names": [],
+                "last_ai_message": "",
+            }
+        return {
+            "followup_count": record["followup_count"] or 0,
+            "last_followup_at": record["last_followup_at"],
+            "language": record["language"] or "es",
+            "name": record["name"] or "",
+            "phone": record["phone"] or "",
+            "building_names": record["building_names"] or [],
+            "last_ai_message": record["last_ai_message"] or "",
+        }
 
     # --- Utility ---
 

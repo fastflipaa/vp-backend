@@ -64,6 +64,8 @@ class ConversationSM(StateMachine):
     QUALIFIED = State("Qualified")
     NON_RESPONSIVE = State("NonResponsive")
     RECOVERY = State("Recovery")
+    FOLLOW_UP = State("FollowUp")
+    RE_ENGAGE = State("ReEngage")
 
     # --- Transitions ---
 
@@ -77,6 +79,12 @@ class ConversationSM(StateMachine):
         | QUALIFIED.to(HANDOFF, cond="has_appointment")
         | NON_RESPONSIVE.to(CLOSED, cond="is_unresponsive")
         | RECOVERY.to(GREETING)
+        # Follow-up: transition to NON_RESPONSIVE after 3 unanswered attempts
+        | FOLLOW_UP.to(NON_RESPONSIVE, cond="is_unresponsive")
+        # Follow-up: lead replies -> re-enter qualifying
+        | FOLLOW_UP.to(QUALIFYING, cond="has_reply")
+        # Re-engage: lead replies -> re-enter qualifying
+        | RE_ENGAGE.to(QUALIFYING, cond="has_reply")
     )
 
     # Explicit escalation from any active state
@@ -87,6 +95,8 @@ class ConversationSM(StateMachine):
         | QUALIFIED.to(HANDOFF)
         | NON_RESPONSIVE.to(HANDOFF)
         | RECOVERY.to(HANDOFF)
+        | FOLLOW_UP.to(HANDOFF)
+        | RE_ENGAGE.to(HANDOFF)
     )
 
     # Broker classification -- only from early states
@@ -103,6 +113,8 @@ class ConversationSM(StateMachine):
         | QUALIFIED.to(CLOSED)
         | NON_RESPONSIVE.to(CLOSED)
         | RECOVERY.to(CLOSED)
+        | FOLLOW_UP.to(CLOSED)
+        | RE_ENGAGE.to(CLOSED)
     )
 
     # Error recovery -- any active state can enter recovery
@@ -112,6 +124,8 @@ class ConversationSM(StateMachine):
         | SCHEDULING.to(RECOVERY)
         | QUALIFIED.to(RECOVERY)
         | NON_RESPONSIVE.to(RECOVERY)
+        | FOLLOW_UP.to(RECOVERY)
+        | RE_ENGAGE.to(RECOVERY)
     )
 
     # --- Guard conditions ---
@@ -143,6 +157,10 @@ class ConversationSM(StateMachine):
     def is_broker(self, classification: str = "", **kwargs) -> bool:
         """Lead classified as broker or advertiser by detection gate."""
         return classification in ("broker", "advertiser")
+
+    def has_reply(self, has_reply: bool = False, **kwargs) -> bool:
+        """Lead replied during follow-up or re-engagement sequence."""
+        return bool(has_reply)
 
     # --- Hooks ---
 
