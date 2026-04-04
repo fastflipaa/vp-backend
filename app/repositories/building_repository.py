@@ -75,6 +75,59 @@ class BuildingRepository:
         )
         return [dict(r) async for r in result]
 
+    async def get_building_by_name(self, building_name: str) -> list[dict[str, Any]]:
+        """Get building data by name (fuzzy match via CONTAINS).
+
+        Used as fallback when no INTERESTED_IN relationship exists
+        but the conversation context detected a building mention.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_building_by_name_tx, building_name
+            )
+            logger.debug(
+                "building_by_name_read",
+                name=building_name,
+                count=len(result),
+            )
+            return result
+
+    @staticmethod
+    async def _get_building_by_name_tx(tx, name: str) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (b:Building)
+            WHERE toLower(b.name) CONTAINS toLower($name)
+            OPTIONAL MATCH (b)-[:HAS_UNIT]->(u:UnitType)
+            WITH b,
+                 collect(DISTINCT {
+                     name: u.name,
+                     bedrooms: u.bedrooms,
+                     floor_range: u.floor_range,
+                     description: u.description,
+                     notes: u.notes
+                 }) AS units
+            RETURN b.name AS name,
+                   b.building_id AS building_id,
+                   b.city AS city,
+                   b.country AS country,
+                   b.price_min_usd AS price_min_usd,
+                   b.price_max_usd AS price_max_usd,
+                   b.pricing_verified AS pricing_verified,
+                   b.status AS status,
+                   b.total_floors AS total_floors,
+                   b.total_units AS total_units,
+                   b.views AS views,
+                   b.key_features AS key_features,
+                   b.description_es AS description_es,
+                   b.completion_date AS completion_date,
+                   units
+            LIMIT 3
+            """,
+            name=name,
+        )
+        return [dict(r) async for r in result]
+
     # --- GraphRAG similarity ---
 
     async def get_similar_buildings(

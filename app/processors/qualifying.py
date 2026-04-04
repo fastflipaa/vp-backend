@@ -504,6 +504,19 @@ class QualifyingProcessor(BaseProcessor):
         if self._building_repo and phone:
             try:
                 buildings = await self._building_repo.get_buildings_for_lead(phone)
+                # Fallback: if no INTERESTED_IN relationship, use mostRecentBuilding
+                if not buildings:
+                    recent_building = conversation_context.get("mostRecentBuilding")
+                    if recent_building:
+                        buildings = await self._building_repo.get_building_by_name(
+                            recent_building
+                        )
+                        if buildings:
+                            logger.info(
+                                "qualifying.building_fallback_used",
+                                trace_id=trace_id,
+                                building=recent_building,
+                            )
                 if buildings:
                     building_context = _format_building_context(buildings, fernando_deferred)
             except Exception:
@@ -767,6 +780,19 @@ class QualifyingProcessor(BaseProcessor):
         if self._building_repo and phone:
             try:
                 buildings = await self._building_repo.get_buildings_for_lead(phone)
+                # Fallback: if no INTERESTED_IN relationship, use mostRecentBuilding
+                if not buildings:
+                    recent_building = conversation_context.get("mostRecentBuilding")
+                    if recent_building:
+                        buildings = await self._building_repo.get_building_by_name(
+                            recent_building
+                        )
+                        if buildings:
+                            logger.info(
+                                "qualifying.building_match_fallback_used",
+                                trace_id=trace_id,
+                                building=recent_building,
+                            )
                 if buildings:
                     # Format building data with pricing_verified checks
                     building_context = _format_building_context(buildings, fernando_deferred)
