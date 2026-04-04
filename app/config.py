@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     CANARY_TAG: str = "v3-canary"
     CANARY_ENABLED: bool = False  # Set to True to activate canary routing
 
+    # Old-lead outreach (Phase 20)
+    OUTREACH_BATCH_SIZE: int = 75          # Daily batch: 50-100 configurable, default 75
+    OUTREACH_MAX_PER_QUARTER: int = 2      # Max attempts per rolling 90-day window
+    OUTREACH_MIN_INACTIVE_DAYS: int = 30   # Minimum days inactive before eligible
+
     # Derived Redis URLs for different databases
     @property
     def redis_broker_url(self) -> str:
