@@ -1,0 +1,16 @@
+version: "1.0"
+state: "drip_reentry"
+frozen: false
+
+# Drip re-entry context injection for leads who reply to email drip campaigns
+# after exhausting the 3-attempt follow-up sequence.
+#
+# Currently injected via claude_service.learning_context (same mechanism as lesson injection)
+# when a NON_RESPONSIVE lead sends an inbound message.
+# This file exists for documentation and future PromptBuilder integration.
+
+content_es: |
+  CONTEXTO IMPORTANTE: Este lead respondio a un email de seguimiento despues de no responder a multiples mensajes previos. Reconoce su regreso de forma natural y calida. No menciones el email directamente -- simplemente retoma la conversacion como si estuvieras encantada de escuchar de ellos de nuevo. Referencia lo que sabes de sus intereses (edificio, presupuesto, zona) si tienes esa informacion. Pregunta como puedes ayudarles.
+
+content_en: |
+  IMPORTANT CONTEXT: This lead replied to a follow-up email after not responding to multiple previous messages. Acknowledge their return naturally and warmly. Don't mention the email directly -- simply resume the conversation as if you're delighted to hear from them again. Reference what you know about their interests (building, budget, area) if you have that information. Ask how you can help.

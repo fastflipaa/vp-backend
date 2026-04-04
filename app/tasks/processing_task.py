@@ -215,6 +215,48 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 lead_data.get("language", "es") if lead_data else "es"
             )
 
+        # ── Stage 1.8: Follow-Up Re-Entry Check ──
+        # Handles two cases:
+        # A) NON_RESPONSIVE lead replies (email drip re-entry) -> QUALIFYING + counter reset
+        # B) FOLLOW_UP lead replies (mid-sequence) -> QUALIFYING + counter reset
+        drip_reentry_context = {}
+        if current_state == "NON_RESPONSIVE" and inbound.direction == "inbound" and inbound.message:
+            # Lead is replying after being in email drip -- re-enter qualifying
+            try:
+                await lead_repo.save_state(contact_id, "QUALIFYING")
+                await lead_repo.reset_followup_count(contact_id)
+                current_state = "QUALIFYING"
+                is_new_lead = False
+
+                drip_reentry_context = {
+                    "is_drip_reentry": True,
+                    "returning_lead": True,
+                }
+
+                logger.info(
+                    "drip_reentry.state_reset",
+                    trace_id=trace_id,
+                    contact_id=contact_id,
+                    from_state="NON_RESPONSIVE",
+                    to_state="QUALIFYING",
+                )
+            except Exception:
+                logger.exception("drip_reentry.reset_failed", trace_id=trace_id)
+        elif current_state == "FOLLOW_UP" and inbound.direction == "inbound" and inbound.message:
+            # Lead replied during follow-up sequence -- reset counter, continue in QUALIFYING
+            try:
+                await lead_repo.reset_followup_count(contact_id)
+                await lead_repo.save_state(contact_id, "QUALIFYING")
+                current_state = "QUALIFYING"
+
+                logger.info(
+                    "followup_midsequence_reply",
+                    trace_id=trace_id,
+                    contact_id=contact_id,
+                )
+            except Exception:
+                logger.exception("followup_reset_failed", trace_id=trace_id)
+
         # ── Stage 2: Human Agent Check ──
         conversation_ctx: dict = {}
         is_human_active = False
@@ -370,6 +412,32 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             except Exception:
                 logger.exception("lesson_injection_failed", trace_id=trace_id)
                 # Fail-open: continue without lessons
+
+        # ── Stage 5.6: Drip Re-Entry Context Injection ──
+        if drip_reentry_context.get("is_drip_reentry"):
+            drip_text = (
+                "CONTEXTO IMPORTANTE: Este lead respondio a un email de seguimiento despues de no responder "
+                "a multiples mensajes previos. Reconoce su regreso de forma natural y calida. "
+                "No menciones el email directamente -- simplemente retoma la conversacion como si estuvieras "
+                "encantada de escuchar de ellos de nuevo. Pregunta como puedes ayudarles."
+            )
+            if detected_lang == "en":
+                drip_text = (
+                    "IMPORTANT CONTEXT: This lead replied to a follow-up email after not responding "
+                    "to multiple previous messages. Acknowledge their return naturally and warmly. "
+                    "Don't mention the email directly -- simply resume the conversation as if you're "
+                    "delighted to hear from them again. Ask how you can help."
+                )
+            claude_service.learning_context = (
+                (claude_service.learning_context + "\n\n" + drip_text)
+                if claude_service.learning_context
+                else drip_text
+            )
+            logger.info(
+                "drip_reentry_context_injected",
+                trace_id=trace_id,
+                language=detected_lang,
+            )
 
         # Merge lead_data with additional context
         lead_data_with_context = {
