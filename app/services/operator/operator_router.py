@@ -75,6 +75,7 @@ class OperatorRouter:
             "phone": phone,
             "message": "",
             "direction": "outbound",
+            "channel": "SMS",  # Default to SMS for operator-routed leads
             "messageType": f"operator_{classified_state.lower()}",
             "isAutoTrigger": True,
             "tags": [],

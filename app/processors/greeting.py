@@ -161,8 +161,8 @@ class GreetingProcessor(BaseProcessor):
                 if conversation_context.get("structured_turns")
                 else conversation_context.get("ghlConversationContext", "")
             ),
-            "crm_context": json.dumps(enriched_context) if enriched_context else "",
-            "cross_session_memory": json.dumps(memory) if memory else "",
+            "crm_context": json.dumps(enriched_context, default=str) if enriched_context else "",
+            "cross_session_memory": json.dumps(memory, default=str) if memory else "",
             "cadence": (
                 lead_data.get("cadence", "explorer")
                 if not is_new_lead

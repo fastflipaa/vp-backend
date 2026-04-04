@@ -95,6 +95,9 @@ async def send_message(
         httpx.HTTPStatusError: On non-retryable HTTP errors (after 3 retries
             for retryable ones).
     """
+    # Default empty/invalid channel to SMS to prevent GHL 422
+    if not channel or channel.strip() == "":
+        channel = "SMS"
     client = get_ghl_client()
     response = await client.post(
         "/conversations/messages",
