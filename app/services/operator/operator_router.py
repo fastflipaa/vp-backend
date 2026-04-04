@@ -69,7 +69,19 @@ class OperatorRouter:
             )
             return {"routed": False, "reason": "max_returns_exceeded"}
 
-        # 3. Build synthetic payload matching process_message format
+        # 3. Cross-task dedup — prevent multiple beat tasks from messaging the same lead
+        contact_lock_key = f"outbound:recently_contacted:{contact_id}"
+        if self._redis.get(contact_lock_key):
+            logger.info(
+                "operator.already_contacted",
+                contact_id=contact_id,
+                reason="recently_contacted_by_another_task",
+            )
+            return {"routed": False, "reason": "recently_contacted"}
+        # Set lock with 6-hour TTL — no other beat task can contact this lead for 6h
+        self._redis.set(contact_lock_key, "1", ex=21600)
+
+        # 4. Build synthetic payload matching process_message format
         payload = {
             "contactId": contact_id,
             "phone": phone,

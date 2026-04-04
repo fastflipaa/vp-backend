@@ -98,6 +98,14 @@ def followup_check() -> dict:
                     "leadName": name,
                 }
 
+                # Cross-task dedup — skip if another task recently contacted this lead
+                lock_key = f"outbound:recently_contacted:{contact_id}"
+                if _redis_client and _redis_client.get(lock_key):
+                    logger.info("followup.skipped_recently_contacted", contact_id=contact_id)
+                    continue
+                if _redis_client:
+                    _redis_client.set(lock_key, "1", ex=21600)  # 6h TTL
+
                 # Route through full processing pipeline
                 process_message.delay(synthetic_payload, trace_id)
                 followups_triggered += 1
