@@ -9,6 +9,7 @@ NEVER reused across coroutines to avoid transaction conflicts.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import structlog
@@ -637,6 +638,329 @@ class LeadRepository:
             limit=limit,
         )
         return [dict(record) async for record in result]
+
+    # --- Reengagement (Phase 20) ---
+
+    async def find_old_leads_for_reengagement(
+        self,
+        min_inactive_days: int,
+        batch_size: int,
+    ) -> list[dict[str, Any]]:
+        """Find leads inactive for N+ days eligible for batch re-engagement.
+
+        Returns leads ordered by age-wave priority (oldest first), with
+        leads having building interest prioritised over those without.
+
+        Hard exclusions: BROKER, CLOSED, HANDOFF, RECOVERY, SCHEDULED states
+        and permanently exhausted leads (reengagement_exhausted=true).
+
+        Note: GHL DND field is NOT synced to Neo4j Lead nodes. Leads tagged
+        DND in GHL but never re-engaged will not be excluded here. See
+        Phase 20 SUMMARY Known Gaps for details.
+        """
+        async with self._driver.session() as session:
+            results = await session.execute_read(
+                self._find_old_leads_for_reengagement_tx,
+                min_inactive_days,
+                batch_size,
+            )
+            logger.info(
+                "old_leads_for_reengagement_query",
+                min_inactive_days=min_inactive_days,
+                batch_size=batch_size,
+                found=len(results),
+            )
+            return results
+
+    @staticmethod
+    async def _find_old_leads_for_reengagement_tx(
+        tx, min_inactive_days: int, batch_size: int
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead)
+            WHERE l.updatedAt < datetime() - duration({days: $min_days})
+            AND l.current_state NOT IN ['BROKER', 'CLOSED', 'HANDOFF', 'RECOVERY', 'SCHEDULED']
+            AND coalesce(l.reengagement_exhausted, false) = false
+            OPTIONAL MATCH (l)-[:INTERESTED_IN]->(b:Building)
+            WITH l, count(b) AS building_count
+            ORDER BY
+              CASE WHEN building_count > 0 THEN 0 ELSE 1 END ASC,
+              l.updatedAt ASC
+            LIMIT $batch_size
+            RETURN l.ghl_contact_id AS contact_id,
+                   l.phone AS phone,
+                   l.name AS name,
+                   l.language AS language,
+                   coalesce(l.reengagement_count, 0) AS reengagement_count,
+                   l.last_reengagement_at AS last_reengagement_at,
+                   building_count
+            """,
+            min_days=min_inactive_days,
+            batch_size=batch_size,
+        )
+        return [dict(record) async for record in result]
+
+    async def increment_reengagement_count(self, contact_id: str) -> int:
+        """Increment the reengagement counter on a Lead node.
+
+        Uses MERGE so the Lead node is created if it does not exist.
+        Also updates ``last_reengagement_at`` for rolling-window queries.
+
+        Returns the new reengagement_count after increment.
+        """
+        async with self._driver.session() as session:
+            new_count = await session.execute_write(
+                self._increment_reengagement_count_tx, contact_id
+            )
+            logger.info(
+                "reengagement_count_incremented",
+                contact_id=contact_id,
+                new_count=new_count,
+            )
+            return new_count
+
+    @staticmethod
+    async def _increment_reengagement_count_tx(tx, contact_id: str) -> int:
+        result = await tx.run(
+            """
+            MERGE (l:Lead {ghl_contact_id: $cid})
+            SET l.reengagement_count = coalesce(l.reengagement_count, 0) + 1,
+                l.last_reengagement_at = datetime(),
+                l.updatedAt = datetime()
+            RETURN l.reengagement_count AS reengagement_count
+            """,
+            cid=contact_id,
+        )
+        record = await result.single()
+        return record["reengagement_count"] if record else 1
+
+    async def check_reengagement_eligible(
+        self, contact_id: str
+    ) -> dict[str, Any]:
+        """Check if a lead is eligible for re-engagement outreach.
+
+        Rolling 90-day window logic:
+        - reengagement_count < 2: eligible
+        - reengagement_count >= 2 AND within 90 days: NOT eligible (spam limit)
+        - reengagement_count >= 2 AND outside 90 days: RESET counter, eligible
+        - reengagement_exhausted = true: permanently NOT eligible (dead lead)
+
+        Returns dict with ``eligible`` (bool) and ``reason`` (str).
+        Uses execute_write since it may reset the counter.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_write(
+                self._check_reengagement_eligible_tx, contact_id
+            )
+            logger.debug(
+                "reengagement_eligibility_checked",
+                contact_id=contact_id,
+                eligible=result["eligible"],
+                reason=result["reason"],
+            )
+            return result
+
+    @staticmethod
+    async def _check_reengagement_eligible_tx(
+        tx, contact_id: str
+    ) -> dict[str, Any]:
+        # Read current state
+        result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            RETURN coalesce(l.reengagement_count, 0) AS reengagement_count,
+                   l.last_reengagement_at AS last_reengagement_at,
+                   coalesce(l.reengagement_exhausted, false) AS reengagement_exhausted
+            """,
+            cid=contact_id,
+        )
+        record = await result.single()
+        if not record:
+            return {"eligible": True, "reason": "lead_not_found_defaults_eligible"}
+
+        if record["reengagement_exhausted"]:
+            return {"eligible": False, "reason": "permanently_exhausted"}
+
+        count = record["reengagement_count"]
+        last_at = record["last_reengagement_at"]
+
+        if count < 2:
+            return {"eligible": True, "reason": "under_limit"}
+
+        # count >= 2: check if outside 90-day window
+        if last_at is None:
+            # Has count but no timestamp -- treat as eligible with reset
+            await tx.run(
+                """
+                MATCH (l:Lead {ghl_contact_id: $cid})
+                SET l.reengagement_count = 0, l.updatedAt = datetime()
+                """,
+                cid=contact_id,
+            )
+            return {"eligible": True, "reason": "counter_reset_no_timestamp"}
+
+        # Check 90-day window using Neo4j datetime comparison
+        window_result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            RETURN l.last_reengagement_at <= datetime() - duration({days: 90}) AS outside_window
+            """,
+            cid=contact_id,
+        )
+        window_record = await window_result.single()
+
+        if window_record and window_record["outside_window"]:
+            # Outside 90-day window: reset counter, eligible for new window
+            await tx.run(
+                """
+                MATCH (l:Lead {ghl_contact_id: $cid})
+                SET l.reengagement_count = 0,
+                    l.last_reengagement_at = null,
+                    l.updatedAt = datetime()
+                """,
+                cid=contact_id,
+            )
+            return {"eligible": True, "reason": "counter_reset_90day_window_expired"}
+
+        return {"eligible": False, "reason": "at_limit_within_90day_window"}
+
+    async def get_reengagement_data(
+        self, contact_id: str
+    ) -> dict[str, Any]:
+        """Fetch re-engagement data for a lead: count, buildings, recommended history.
+
+        Returns a dict with reengagement_count, last_reengagement_at,
+        building_names, building_ids, recommended_buildings (parsed list),
+        language, name, phone, and last_ai_message.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_reengagement_data_tx, contact_id
+            )
+            logger.debug("reengagement_data_read", contact_id=contact_id)
+            return result
+
+    @staticmethod
+    async def _get_reengagement_data_tx(
+        tx, contact_id: str
+    ) -> dict[str, Any]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            OPTIONAL MATCH (l)-[:INTERESTED_IN]->(b:Building)
+            WITH l, collect(b.name) AS building_names, collect(b.building_id) AS building_ids
+            OPTIONAL MATCH (l)-[:HAS_INTERACTION]->(i:Interaction {role: 'assistant'})
+            WITH l, building_names, building_ids, i
+            ORDER BY i.created_at DESC
+            LIMIT 1
+            RETURN coalesce(l.reengagement_count, 0) AS reengagement_count,
+                   l.last_reengagement_at AS last_reengagement_at,
+                   l.language AS language,
+                   l.name AS name,
+                   l.phone AS phone,
+                   building_names,
+                   building_ids,
+                   coalesce(l.recommended_buildings, '[]') AS recommended_buildings_json,
+                   i.content AS last_ai_message
+            """,
+            cid=contact_id,
+        )
+        record = await result.single()
+        if not record:
+            return {
+                "reengagement_count": 0,
+                "last_reengagement_at": None,
+                "language": "es",
+                "name": "",
+                "phone": "",
+                "building_names": [],
+                "building_ids": [],
+                "recommended_buildings": [],
+                "last_ai_message": "",
+            }
+
+        # Parse recommended_buildings JSON safely
+        raw_json = record["recommended_buildings_json"] or "[]"
+        try:
+            recommended = json.loads(raw_json)
+        except (json.JSONDecodeError, TypeError):
+            recommended = []
+
+        return {
+            "reengagement_count": record["reengagement_count"] or 0,
+            "last_reengagement_at": record["last_reengagement_at"],
+            "language": record["language"] or "es",
+            "name": record["name"] or "",
+            "phone": record["phone"] or "",
+            "building_names": record["building_names"] or [],
+            "building_ids": record["building_ids"] or [],
+            "recommended_buildings": recommended,
+            "last_ai_message": record["last_ai_message"] or "",
+        }
+
+    async def record_recommended_buildings(
+        self, contact_id: str, building_names: list[str]
+    ) -> None:
+        """Update the recommended_buildings JSON array on a Lead node.
+
+        The caller (processor) merges existing + new lists and passes the
+        full list. This method serialises to JSON and writes.
+        """
+        buildings_json = json.dumps(building_names, ensure_ascii=False)
+        async with self._driver.session() as session:
+            await session.execute_write(
+                self._record_recommended_buildings_tx,
+                contact_id,
+                buildings_json,
+            )
+            logger.info(
+                "recommended_buildings_recorded",
+                contact_id=contact_id,
+                count=len(building_names),
+            )
+
+    @staticmethod
+    async def _record_recommended_buildings_tx(
+        tx, contact_id: str, buildings_json: str
+    ) -> None:
+        await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            SET l.recommended_buildings = $buildings_json,
+                l.updatedAt = datetime()
+            """,
+            cid=contact_id,
+            buildings_json=buildings_json,
+        )
+
+    async def mark_reengagement_exhausted(self, contact_id: str) -> None:
+        """Mark a lead as permanently exhausted from re-engagement.
+
+        Sets ``reengagement_exhausted = true`` on the Lead node. After dead
+        classification, no further automated outreach is attempted.
+        """
+        async with self._driver.session() as session:
+            await session.execute_write(
+                self._mark_reengagement_exhausted_tx, contact_id
+            )
+            logger.info(
+                "reengagement_exhausted_marked",
+                contact_id=contact_id,
+            )
+
+    @staticmethod
+    async def _mark_reengagement_exhausted_tx(
+        tx, contact_id: str
+    ) -> None:
+        await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            SET l.reengagement_exhausted = true,
+                l.updatedAt = datetime()
+            """,
+            cid=contact_id,
+        )
 
     # --- Utility ---
 
