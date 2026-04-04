@@ -520,7 +520,11 @@ class QualifyingProcessor(BaseProcessor):
         parsed = _parse_claude_json(response_text)
         response_msg = parsed.get("response", response_text)
         sentiment = parsed.get("sentiment", "neutral")
-        sentiment_confidence = float(parsed.get("sentiment_confidence", 0.5))
+        raw_conf = parsed.get("sentiment_confidence", 0.5)
+        try:
+            sentiment_confidence = float(raw_conf) if raw_conf is not None else 0.5
+        except (ValueError, TypeError):
+            sentiment_confidence = 0.5
 
         # Check for escalation
         should_escalate, escalation_reason = _check_escalation(
@@ -793,7 +797,11 @@ class QualifyingProcessor(BaseProcessor):
         parsed = _parse_claude_json(response_text)
         response_msg = parsed.get("response", response_text)
         sentiment = parsed.get("sentiment", "neutral")
-        sentiment_confidence = float(parsed.get("sentiment_confidence", 0.5))
+        raw_conf = parsed.get("sentiment_confidence", 0.5)
+        try:
+            sentiment_confidence = float(raw_conf) if raw_conf is not None else 0.5
+        except (ValueError, TypeError):
+            sentiment_confidence = 0.5
 
         # Check escalation
         should_escalate, escalation_reason = _check_escalation(

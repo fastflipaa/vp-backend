@@ -235,7 +235,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 classification = await claude_service.classify(
                     message=message,
                     phone=phone,
-                    contact_context=json.dumps(lead_data) if lead_data else "",
+                    contact_context=json.dumps(lead_data, default=str) if lead_data else "",
                 )
                 if classification.get("classification") in ("broker", "advertiser"):
                     confidence = classification.get("confidence", 0)

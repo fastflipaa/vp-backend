@@ -113,7 +113,14 @@ class ErrorClassifier:
         # Persist errors and update patterns
         contact_id = lead_data.get("contact_id")
         phone = lead_data.get("phone", "")
-        conversation_id = f"{contact_id}:{messages[0].get('created_at', 'unknown')}" if messages else contact_id
+        raw_time = messages[0].get('created_at', 'unknown') if messages else 'unknown'
+        if hasattr(raw_time, 'to_native'):
+            time_str = raw_time.to_native().isoformat()
+        elif hasattr(raw_time, 'isoformat'):
+            time_str = raw_time.isoformat()
+        else:
+            time_str = str(raw_time)
+        conversation_id = f"{contact_id}:{time_str}" if messages else contact_id
 
         for error in errors:
             try:
@@ -255,6 +262,7 @@ class ErrorClassifier:
                 why=why,
                 severity=severity,
                 confidence=0.5,
+                source_pattern=error_type,
             )
             await self._alert.send(
                 alert_type="lesson_candidate",

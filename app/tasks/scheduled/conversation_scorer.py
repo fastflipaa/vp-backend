@@ -202,13 +202,14 @@ def conversation_scorer() -> dict:
                 if user_msgs and assistant_msgs:
                     checked = 0
                     ignored = 0
-                    for umsg in user_msgs:
+                    for idx, umsg in enumerate(user_msgs):
                         u_lower = umsg.lower()
                         for pattern in INTENT_PATTERNS:
                             if re.search(pattern["lead_regex"], u_lower, re.IGNORECASE):
                                 checked += 1
-                                # Check latest assistant msg for response
-                                a_lower = assistant_msgs[0].lower()
+                                # Find corresponding assistant response
+                                a_msg = assistant_msgs[min(idx, len(assistant_msgs) - 1)]
+                                a_lower = a_msg.lower()
                                 addressed = any(
                                     re.search(ind, a_lower, re.IGNORECASE)
                                     for ind in pattern["response_must_contain"]
@@ -219,7 +220,13 @@ def conversation_scorer() -> dict:
                         intent_score = 1.0 - (ignored / checked)
 
                 # Create ConversationOutcome
-                latest_time = str(interactions[0].get("created_at", "unknown"))
+                raw_time = interactions[0].get("created_at", "unknown")
+                if hasattr(raw_time, 'to_native'):
+                    latest_time = raw_time.to_native().isoformat()
+                elif hasattr(raw_time, 'isoformat'):
+                    latest_time = raw_time.isoformat()
+                else:
+                    latest_time = str(raw_time)
                 conversation_id = f"{contact_id}:{latest_time}"
 
                 try:

@@ -92,6 +92,7 @@ class AutoLessonGenerator:
                     why=template["why"],
                     severity=template["severity"],
                     confidence=0.5,
+                    source_pattern=pattern_name,
                 )
                 generated.append({
                     "id": lesson_id,

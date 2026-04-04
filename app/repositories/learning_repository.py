@@ -30,6 +30,17 @@ class LearningRepository:
         self._driver = driver
 
     @staticmethod
+    def _neo4j_to_str(val):
+        """Convert Neo4j DateTime (or any non-serializable) to ISO string."""
+        if val is None:
+            return None
+        if hasattr(val, 'to_native'):
+            return val.to_native().isoformat()
+        if hasattr(val, 'isoformat'):
+            return val.isoformat()
+        return str(val)
+
+    @staticmethod
     def _new_id() -> str:
         return uuid.uuid4().hex
 
@@ -53,8 +64,8 @@ class LearningRepository:
                 oid,
                 conversation_id,
                 outcome_type,
-                json.dumps(scores),
-                json.dumps(metadata) if metadata else "{}",
+                json.dumps(scores, default=str),
+                json.dumps(metadata, default=str) if metadata else "{}",
                 contact_id,
             )
         logger.debug(
@@ -250,7 +261,7 @@ class LearningRepository:
                 lead_phone,
                 score,
                 source,
-                json.dumps(signals),
+                json.dumps(signals, default=str),
             )
         logger.debug(
             "learning.lead_satisfaction_created",
@@ -371,6 +382,7 @@ class LearningRepository:
         severity: str,
         confidence: float,
         building_id: str | None = None,
+        source_pattern: str | None = None,
     ) -> str:
         """Create a LessonLearned node (status=candidate). Optionally link to Building."""
         lid = self._new_id()
@@ -383,6 +395,7 @@ class LearningRepository:
                 severity,
                 confidence,
                 building_id,
+                source_pattern,
             )
         logger.debug(
             "learning.lesson_learned_created",
@@ -401,6 +414,7 @@ class LearningRepository:
         severity: str,
         confidence: float,
         building_id: str | None,
+        source_pattern: str | None = None,
     ) -> None:
         await tx.run(
             """
@@ -410,6 +424,7 @@ class LearningRepository:
                 ll.severity = $severity,
                 ll.confidence = $confidence,
                 ll.status = 'candidate',
+                ll.source_pattern = $source_pattern,
                 ll.created_at = datetime()
             """,
             lid=lid,
@@ -417,6 +432,7 @@ class LearningRepository:
             why=why,
             severity=severity,
             confidence=confidence,
+            source_pattern=source_pattern,
         )
         if building_id:
             await tx.run(
@@ -659,7 +675,13 @@ class LearningRepository:
             """,
             min_freq=min_frequency,
         )
-        return [dict(r) async for r in result]
+        records = [dict(r) async for r in result]
+        for rec in records:
+            if 'first_seen' in rec:
+                rec['first_seen'] = LearningRepository._neo4j_to_str(rec['first_seen'])
+            if 'last_seen' in rec:
+                rec['last_seen'] = LearningRepository._neo4j_to_str(rec['last_seen'])
+        return records
 
     # ------------------------------------------------------------------
     # Building error history
@@ -695,7 +717,11 @@ class LearningRepository:
             bid=building_id,
             days=days,
         )
-        return [dict(r) async for r in result]
+        records = [dict(r) async for r in result]
+        for rec in records:
+            if 'created_at' in rec:
+                rec['created_at'] = LearningRepository._neo4j_to_str(rec['created_at'])
+        return records
 
     # ------------------------------------------------------------------
     # Lesson-error links for conversations
@@ -768,7 +794,11 @@ class LearningRepository:
             statuses=statuses,
             lim=limit,
         )
-        return [dict(r) async for r in result]
+        records = [dict(r) async for r in result]
+        for rec in records:
+            if 'created_at' in rec:
+                rec['created_at'] = LearningRepository._neo4j_to_str(rec['created_at'])
+        return records
 
     # ------------------------------------------------------------------
     # Lesson lifecycle
@@ -837,7 +867,7 @@ class LearningRepository:
     # ------------------------------------------------------------------
 
     async def check_lesson_exists_for_pattern(self, pattern_name: str) -> bool:
-        """Check if any active LessonLearned has a rule containing the pattern name."""
+        """Check if any active LessonLearned has a matching source_pattern."""
         async with self._driver.session() as session:
             result = await session.execute_read(
                 self._check_lesson_exists_for_pattern_tx, pattern_name
@@ -849,7 +879,7 @@ class LearningRepository:
         result = await tx.run(
             """
             MATCH (ll:LessonLearned)
-            WHERE ll.rule CONTAINS $pattern_name
+            WHERE ll.source_pattern = $pattern_name
               AND ll.status IN ['candidate', 'approved', 'evergreen']
             RETURN count(ll) > 0 AS exists
             """,
@@ -900,7 +930,9 @@ class LearningRepository:
                 continue
             count += 1
             for key in totals:
-                totals[key] += float(scores.get(key, 0.0))
+                val = scores.get(key, 0.0)
+                if val is not None:
+                    totals[key] += float(val)
 
         if count == 0:
             return {"repetition": 0.0, "sentiment": 0.0, "intent_alignment": 0.0, "count": 0}
