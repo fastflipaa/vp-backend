@@ -69,6 +69,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
     """Full message processing pipeline.
 
     Stages:
+    0. Idempotency + cooldown guards (prevent duplicates on worker restart)
     1. Resolve lead state from Neo4j
     2. Check human agent activity (GHL)
     3. Classify message (Claude Haiku -- if needed)
@@ -84,6 +85,37 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
     On Neo4j failure: log error but still attempt delivery (fail-open).
     """
     start_time = time.time()
+
+    # ── Stage 0: Idempotency Guard ──
+    # Prevents re-delivered tasks (from worker crash + acks_late) from
+    # sending duplicate messages. Uses Celery task ID as Redis key.
+    task_id = self.request.id
+    if _redis_client and task_id:
+        idempotency_key = f"task:completed:{task_id}"
+        if _redis_client.get(idempotency_key):
+            logger.info(
+                "task_already_processed",
+                task_id=task_id,
+                trace_id=trace_id,
+            )
+            return {"status": "skipped", "reason": "already_processed"}
+
+    # ── Stage 0.5: Per-Contact Outbound Cooldown ──
+    # For auto-triggered messages (scheduled tasks), enforce a 1-hour
+    # cooldown per contact to prevent ANY code path from spamming.
+    contact_id_for_cooldown = payload.get("contactId", "")
+    is_auto = payload.get("isAutoTrigger", False)
+    if is_auto and contact_id_for_cooldown and _redis_client:
+        cooldown_key = f"outbound:cooldown:{contact_id_for_cooldown}"
+        if _redis_client.get(cooldown_key):
+            logger.info(
+                "contact_cooldown_active",
+                contact_id=contact_id_for_cooldown,
+                trace_id=trace_id,
+            )
+            return {"status": "skipped", "reason": "contact_cooldown"}
+        # Set cooldown BEFORE processing to prevent race conditions
+        _redis_client.set(cooldown_key, "1", ex=3600)  # 1h cooldown
 
     async def _run():
         # Import all dependencies inside the task to avoid circular imports
@@ -529,6 +561,13 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             duration_ms=round(duration_ms, 2),
             delivery_status=delivery_result.get("status"),
         )
+
+        # Mark task as completed for idempotency (2h TTL)
+        if _redis_client and task_id:
+            try:
+                _redis_client.set(f"task:completed:{task_id}", "1", ex=7200)
+            except Exception:
+                logger.warning("idempotency_mark_failed", task_id=task_id)
 
         return {
             "status": "processed",

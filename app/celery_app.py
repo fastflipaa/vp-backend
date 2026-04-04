@@ -50,10 +50,16 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=100,
     worker_hijack_root_logger=False,
+    # Disable task events to prevent pidbox enable_events crash
+    # (Celery 5.6.3 race condition: event dispatcher is None when
+    # pidbox receives enable_events before worker fully initialized)
+    worker_send_task_events=False,
     # Broker settings
     broker_connection_retry_on_startup=True,
     broker_transport_options={"visibility_timeout": 3600},
     # Reliability: late ack + reject on worker lost
+    # Combined with idempotency guard in process_message to prevent
+    # duplicate sends on worker crash + task re-delivery.
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     # Queue routing: separate gate and processing workers for independent scaling
