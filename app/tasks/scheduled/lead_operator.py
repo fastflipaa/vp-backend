@@ -69,6 +69,10 @@ def lead_operator_sweep() -> dict:
         from app.services.operator.lead_classifier import LeadClassifier
         from app.services.operator.operator_router import OperatorRouter
 
+        if _redis_client is None:
+            logger.error("lead_operator.redis_not_initialized")
+            return {"orphans_found": 0, "synced": 0, "classified": 0, "routed": 0, "errored": 0, "skipped_not_worth": 0}
+
         try:
             driver = await get_driver()
             sync_service = GHLSyncService(driver)

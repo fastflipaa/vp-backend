@@ -154,98 +154,107 @@ class ConversationQualityScanner:
 
                 counts["leads_scanned"] += 1
 
-                # Fetch last 10 interactions for this lead
-                async with driver.session() as session:
-                    result = await session.run(
-                        """
-                        MATCH (l:Lead {phone: $phone})-[:HAS_INTERACTION]->(i:Interaction)
-                        RETURN i.role AS role, i.content AS content, i.created_at AS created_at
-                        ORDER BY i.created_at DESC
-                        LIMIT 10
-                        """,
-                        phone=phone,
+                try:
+                    # Fetch last 10 interactions for this lead
+                    async with driver.session() as session:
+                        result = await session.run(
+                            """
+                            MATCH (l:Lead {phone: $phone})-[:HAS_INTERACTION]->(i:Interaction)
+                            RETURN i.role AS role, i.content AS content, i.created_at AS created_at
+                            ORDER BY i.created_at DESC
+                            LIMIT 10
+                            """,
+                            phone=phone,
+                        )
+                        interactions = [dict(r) async for r in result]
+
+                    if not interactions:
+                        continue
+
+                    # Separate user and assistant messages
+                    user_msgs = [i["content"] for i in interactions if i.get("role") == "user" and i.get("content")]
+                    assistant_msgs = [i["content"] for i in interactions if i.get("role") == "assistant" and i.get("content")]
+
+                    # --- Check 1: Repetition ---
+                    if len(assistant_msgs) >= MIN_MESSAGES_FOR_REPETITION:
+                        rep_found = self._check_repetition(assistant_msgs)
+                        if rep_found:
+                            counts["repetition"] += 1
+                            await self._alert.send(
+                                alert_type="repetition",
+                                message=f"Lead {lead.get('name', phone[-4:])} has {rep_found} repetitive AI responses in last 10 messages.",
+                                level=AlertLevel.WARNING,
+                                contact_id=contact_id,
+                                extra={"phone": phone[-4:], "state": lead.get("state", "unknown"), "similar_pairs": str(rep_found)},
+                            )
+                            # Self-healing: advance sub_state to break the loop
+                            await self._self_heal_repetition(contact_id, driver)
+
+                    # --- Check 2: Ignored requests ---
+                    if user_msgs and assistant_msgs:
+                        ignored = self._check_ignored_requests(user_msgs[0], assistant_msgs[0])
+                        if ignored:
+                            counts["ignored_request"] += 1
+                            await self._alert.send(
+                                alert_type="ignored_request",
+                                message=f"Lead {lead.get('name', phone[-4:])}: {ignored['description_es']}",
+                                level=AlertLevel.WARNING,
+                                contact_id=contact_id,
+                                extra={"intent": ignored["name"], "phone": phone[-4:]},
+                            )
+
+                    # --- Check 3: Sentiment drift ---
+                    if len(user_msgs) >= 2:
+                        drift = self._check_sentiment_drift(user_msgs)
+                        if drift:
+                            counts["sentiment_drift"] += 1
+                            alert_level = AlertLevel.CRITICAL if drift["consecutive_negative"] >= 3 else AlertLevel.WARNING
+                            await self._alert.send(
+                                alert_type="sentiment_drift",
+                                message=f"Lead {lead.get('name', phone[-4:])}: sentiment shifted from {drift['from']} to {drift['to']}.",
+                                level=alert_level,
+                                contact_id=contact_id,
+                                extra={"consecutive_negative": str(drift["consecutive_negative"]), "phone": phone[-4:]},
+                            )
+                            # Self-healing: if 3+ negative, tag for human review and pause AI
+                            if drift["consecutive_negative"] >= 3:
+                                await self._self_heal_negative_sentiment(contact_id, driver)
+
+                    # --- Check 4: Hallucination (numeric claims vs Neo4j) ---
+                    if assistant_msgs:
+                        hallucination = await self._check_hallucination(assistant_msgs[0], phone, driver)
+                        if hallucination:
+                            counts["hallucination"] += 1
+                            await self._alert.send(
+                                alert_type="hallucination",
+                                message=f"Lead {lead.get('name', phone[-4:])}: AI claimed {hallucination['claim']} but Neo4j shows {hallucination['actual']}.",
+                                level=AlertLevel.CRITICAL,
+                                contact_id=contact_id,
+                                extra={"claim": hallucination["claim"], "actual": hallucination["actual"], "field": hallucination["field"]},
+                            )
+
+                    # --- Check 5: Language mismatch ---
+                    if user_msgs and assistant_msgs:
+                        mismatch = self._check_language_mismatch(user_msgs[0], assistant_msgs[0])
+                        if mismatch:
+                            counts["language_mismatch"] += 1
+                            await self._alert.send(
+                                alert_type="language_mismatch",
+                                message=f"Lead {lead.get('name', phone[-4:])}: wrote in {mismatch['user_lang']} but AI replied in {mismatch['ai_lang']}.",
+                                level=AlertLevel.WARNING,
+                                contact_id=contact_id,
+                                extra={"user_lang": mismatch["user_lang"], "ai_lang": mismatch["ai_lang"], "phone": phone[-4:]},
+                            )
+                            # Self-healing: correct language field in Neo4j
+                            await self._self_heal_language(contact_id, mismatch["user_lang"], driver)
+
+                except Exception:
+                    logger.exception(
+                        "conversation_scan.lead_error",
+                        contact_id=contact_id,
+                        phone=phone[-4:] if phone else "",
                     )
-                    interactions = [dict(r) async for r in result]
-
-                if not interactions:
                     continue
-
-                # Separate user and assistant messages
-                user_msgs = [i["content"] for i in interactions if i.get("role") == "user" and i.get("content")]
-                assistant_msgs = [i["content"] for i in interactions if i.get("role") == "assistant" and i.get("content")]
-
-                # --- Check 1: Repetition ---
-                if len(assistant_msgs) >= MIN_MESSAGES_FOR_REPETITION:
-                    rep_found = self._check_repetition(assistant_msgs)
-                    if rep_found:
-                        counts["repetition"] += 1
-                        await self._alert.send(
-                            alert_type="repetition",
-                            message=f"Lead {lead.get('name', phone[-4:])} has {rep_found} repetitive AI responses in last 10 messages.",
-                            level=AlertLevel.WARNING,
-                            contact_id=contact_id,
-                            extra={"phone": phone[-4:], "state": lead.get("state", "unknown"), "similar_pairs": str(rep_found)},
-                        )
-                        # Self-healing: advance sub_state to break the loop
-                        await self._self_heal_repetition(contact_id, driver)
-
-                # --- Check 2: Ignored requests ---
-                if user_msgs and assistant_msgs:
-                    ignored = self._check_ignored_requests(user_msgs[0], assistant_msgs[0])
-                    if ignored:
-                        counts["ignored_request"] += 1
-                        await self._alert.send(
-                            alert_type="ignored_request",
-                            message=f"Lead {lead.get('name', phone[-4:])}: {ignored['description_es']}",
-                            level=AlertLevel.WARNING,
-                            contact_id=contact_id,
-                            extra={"intent": ignored["name"], "phone": phone[-4:]},
-                        )
-
-                # --- Check 3: Sentiment drift ---
-                if len(user_msgs) >= 2:
-                    drift = self._check_sentiment_drift(user_msgs)
-                    if drift:
-                        counts["sentiment_drift"] += 1
-                        alert_level = AlertLevel.CRITICAL if drift["consecutive_negative"] >= 3 else AlertLevel.WARNING
-                        await self._alert.send(
-                            alert_type="sentiment_drift",
-                            message=f"Lead {lead.get('name', phone[-4:])}: sentiment shifted from {drift['from']} to {drift['to']}.",
-                            level=alert_level,
-                            contact_id=contact_id,
-                            extra={"consecutive_negative": str(drift["consecutive_negative"]), "phone": phone[-4:]},
-                        )
-                        # Self-healing: if 3+ negative, tag for human review and pause AI
-                        if drift["consecutive_negative"] >= 3:
-                            await self._self_heal_negative_sentiment(contact_id, driver)
-
-                # --- Check 4: Hallucination (numeric claims vs Neo4j) ---
-                if assistant_msgs:
-                    hallucination = await self._check_hallucination(assistant_msgs[0], phone, driver)
-                    if hallucination:
-                        counts["hallucination"] += 1
-                        await self._alert.send(
-                            alert_type="hallucination",
-                            message=f"Lead {lead.get('name', phone[-4:])}: AI claimed {hallucination['claim']} but Neo4j shows {hallucination['actual']}.",
-                            level=AlertLevel.CRITICAL,
-                            contact_id=contact_id,
-                            extra={"claim": hallucination["claim"], "actual": hallucination["actual"], "field": hallucination["field"]},
-                        )
-
-                # --- Check 5: Language mismatch ---
-                if user_msgs and assistant_msgs:
-                    mismatch = self._check_language_mismatch(user_msgs[0], assistant_msgs[0])
-                    if mismatch:
-                        counts["language_mismatch"] += 1
-                        await self._alert.send(
-                            alert_type="language_mismatch",
-                            message=f"Lead {lead.get('name', phone[-4:])}: wrote in {mismatch['user_lang']} but AI replied in {mismatch['ai_lang']}.",
-                            level=AlertLevel.WARNING,
-                            contact_id=contact_id,
-                            extra={"user_lang": mismatch["user_lang"], "ai_lang": mismatch["ai_lang"], "phone": phone[-4:]},
-                        )
-                        # Self-healing: correct language field in Neo4j
-                        await self._self_heal_language(contact_id, mismatch["user_lang"], driver)
 
         except Exception:
             logger.exception("conversation_scan.error")

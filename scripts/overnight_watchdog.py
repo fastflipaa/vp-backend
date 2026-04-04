@@ -108,7 +108,16 @@ async def main():
             rec2 = await result2.single()
             if rec2:
                 stats["outcomes_total"] = rec2["total"]
-                stats["outcomes_latest"] = str(rec2["latest"])[:19] if rec2["latest"] else "none"
+                latest_val = rec2["latest"]
+                if latest_val is not None:
+                    if hasattr(latest_val, 'to_native'):
+                        stats["outcomes_latest"] = latest_val.to_native().isoformat()[:19]
+                    elif hasattr(latest_val, 'isoformat'):
+                        stats["outcomes_latest"] = latest_val.isoformat()[:19]
+                    else:
+                        stats["outcomes_latest"] = str(latest_val)[:19]
+                else:
+                    stats["outcomes_latest"] = "none"
 
             # Check learning nodes
             result3 = await session.run(

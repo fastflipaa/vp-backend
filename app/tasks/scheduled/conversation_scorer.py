@@ -80,6 +80,10 @@ def conversation_scorer() -> dict:
             "satisfaction_inferred": 0,
         }
 
+        if _redis_client is None:
+            logger.error("conversation_scorer.redis_not_initialized")
+            return summary
+
         try:
             driver = await get_driver()
             learning_repo = LearningRepository(driver)

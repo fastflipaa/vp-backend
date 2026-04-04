@@ -63,6 +63,10 @@ def lesson_lifecycle() -> dict:
             "rejected_cleaned": 0,
         }
 
+        if _redis_client is None:
+            logger.error("lesson_lifecycle.redis_not_initialized")
+            return summary
+
         try:
             driver = await get_driver()
             repo = LearningRepository(driver)

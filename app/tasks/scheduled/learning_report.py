@@ -59,6 +59,10 @@ def learning_report() -> dict:
             "report_sent": False,
         }
 
+        if _redis_client is None:
+            logger.error("learning_report.redis_not_initialized")
+            return summary
+
         try:
             driver = await get_driver()
             repo = LearningRepository(driver)
