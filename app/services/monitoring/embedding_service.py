@@ -37,7 +37,6 @@ class EmbeddingService:
     """OpenAI embedding service with Redis circuit breaker."""
 
     def __init__(self) -> None:
-        self._client = httpx.AsyncClient(timeout=30.0)
         self._api_key = settings.OPENAI_API_KEY
         self._redis: redis.Redis | None = None
 
@@ -120,20 +119,21 @@ class EmbeddingService:
             raise EmbeddingCircuitOpen("OPENAI_API_KEY not configured")
 
         try:
-            response = await self._client.post(
-                "https://api.openai.com/v1/embeddings",
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "text-embedding-3-small",
-                    "input": texts,
-                    "dimensions": 768,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "text-embedding-3-small",
+                        "input": texts,
+                        "dimensions": 768,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
 
             vectors = [item["embedding"] for item in data["data"]]
             self._reset_failures()

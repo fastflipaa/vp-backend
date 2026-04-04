@@ -269,7 +269,7 @@ class GHLSyncService:
                     i.role = $role,
                     i.content = $content,
                     i.channel = $channel,
-                    i.created_at = $created_at,
+                    i.created_at = CASE WHEN $created_at <> '' THEN datetime($created_at) ELSE datetime() END,
                     i.source = 'ghl_operator_sync'
                 MERGE (l)-[:HAS_INTERACTION]->(i)
                 """,

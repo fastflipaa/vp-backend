@@ -73,7 +73,7 @@ class OperatorRouter:
         payload = {
             "contactId": contact_id,
             "phone": phone,
-            "message": "",
+            "message": "[Operator re-engagement]",
             "direction": "outbound",
             "channel": "SMS",  # Default to SMS for operator-routed leads
             "messageType": f"operator_{classified_state.lower()}",

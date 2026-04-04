@@ -119,10 +119,13 @@ class AlertManager:
             return
 
         emoji = _LEVEL_EMOJI.get(level, ":bell:")
+        header_text = f"{emoji} [{level.value}] {alert_type}"
+        if len(header_text) > 150:
+            header_text = header_text[:147] + "..."
         blocks = [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": f"{emoji} [{level.value}] {alert_type}"},
+                "text": {"type": "plain_text", "text": header_text},
             },
             {
                 "type": "section",
@@ -137,12 +140,13 @@ class AlertManager:
             blocks.append({"type": "section", "fields": fields[:10]})  # Slack limit
 
         try:
-            resp = httpx.post(
-                webhook_url,
-                json={"blocks": blocks, "text": f"[{level.value}] {alert_type}: {message}"},
-                timeout=5.0,
-            )
-            resp.raise_for_status()
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    webhook_url,
+                    json={"blocks": blocks, "text": f"[{level.value}] {alert_type}: {message}"},
+                    timeout=5.0,
+                )
+                resp.raise_for_status()
         except Exception as exc:
             logger.error("alert.slack_failed", error=str(exc), alert_type=alert_type)
 

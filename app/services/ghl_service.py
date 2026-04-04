@@ -99,18 +99,21 @@ async def send_message(
     if not channel or channel.strip() == "":
         channel = "SMS"
     client = get_ghl_client()
-    response = await client.post(
-        "/conversations/messages",
-        json={"type": channel, "contactId": contact_id, "message": message},
-    )
-    response.raise_for_status()
-    logger.info(
-        "ghl.send_message",
-        contact_id=contact_id,
-        channel=channel,
-        status=response.status_code,
-    )
-    return response.json()
+    try:
+        response = await client.post(
+            "/conversations/messages",
+            json={"type": channel, "contactId": contact_id, "message": message},
+        )
+        response.raise_for_status()
+        logger.info(
+            "ghl.send_message",
+            contact_id=contact_id,
+            channel=channel,
+            status=response.status_code,
+        )
+        return response.json()
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
@@ -139,24 +142,27 @@ async def send_media_message(
         httpx.HTTPStatusError: On non-retryable HTTP errors.
     """
     client = get_ghl_client()
-    response = await client.post(
-        "/conversations/messages",
-        json={
-            "type": channel,
-            "contactId": contact_id,
-            "message": message,
-            "attachments": attachment_urls,
-        },
-    )
-    response.raise_for_status()
-    logger.info(
-        "ghl.send_media_message",
-        contact_id=contact_id,
-        channel=channel,
-        attachments=len(attachment_urls),
-        status=response.status_code,
-    )
-    return response.json()
+    try:
+        response = await client.post(
+            "/conversations/messages",
+            json={
+                "type": channel,
+                "contactId": contact_id,
+                "message": message,
+                "attachments": attachment_urls,
+            },
+        )
+        response.raise_for_status()
+        logger.info(
+            "ghl.send_media_message",
+            contact_id=contact_id,
+            channel=channel,
+            attachments=len(attachment_urls),
+            status=response.status_code,
+        )
+        return response.json()
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
@@ -167,10 +173,13 @@ async def get_contact(contact_id: str) -> dict:
         Parsed JSON response with contact data.
     """
     client = get_ghl_client()
-    response = await client.get(f"/contacts/{contact_id}")
-    response.raise_for_status()
-    logger.debug("ghl.get_contact", contact_id=contact_id, status=response.status_code)
-    return response.json()
+    try:
+        response = await client.get(f"/contacts/{contact_id}")
+        response.raise_for_status()
+        logger.debug("ghl.get_contact", contact_id=contact_id, status=response.status_code)
+        return response.json()
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
@@ -181,16 +190,19 @@ async def get_contact_notes(contact_id: str) -> list[dict]:
         List of note dicts.
     """
     client = get_ghl_client()
-    response = await client.get(f"/contacts/{contact_id}/notes")
-    response.raise_for_status()
-    data = response.json()
-    notes = data.get("notes", data) if isinstance(data, dict) else data
-    logger.debug(
-        "ghl.get_contact_notes",
-        contact_id=contact_id,
-        count=len(notes) if isinstance(notes, list) else 0,
-    )
-    return notes if isinstance(notes, list) else []
+    try:
+        response = await client.get(f"/contacts/{contact_id}/notes")
+        response.raise_for_status()
+        data = response.json()
+        notes = data.get("notes", data) if isinstance(data, dict) else data
+        logger.debug(
+            "ghl.get_contact_notes",
+            contact_id=contact_id,
+            count=len(notes) if isinstance(notes, list) else 0,
+        )
+        return notes if isinstance(notes, list) else []
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
@@ -207,27 +219,30 @@ async def get_conversation_messages(
         List of message dicts.
     """
     client = get_ghl_client()
-    response = await client.get(
-        f"/conversations/{conversation_id}/messages",
-        params={"limit": limit},
-    )
-    response.raise_for_status()
-    data = response.json()
-    # GHL returns {"messages": {"lastMessageId": "...", "messages": [...]}}
-    # Handle both nested and flat formats
-    raw = data.get("messages", data) if isinstance(data, dict) else data
-    if isinstance(raw, dict):
-        messages = raw.get("messages", [])
-    elif isinstance(raw, list):
-        messages = raw
-    else:
-        messages = []
-    logger.debug(
-        "ghl.get_conversation_messages",
-        conversation_id=conversation_id,
-        count=len(messages),
-    )
-    return messages
+    try:
+        response = await client.get(
+            f"/conversations/{conversation_id}/messages",
+            params={"limit": limit},
+        )
+        response.raise_for_status()
+        data = response.json()
+        # GHL returns {"messages": {"lastMessageId": "...", "messages": [...]}}
+        # Handle both nested and flat formats
+        raw = data.get("messages", data) if isinstance(data, dict) else data
+        if isinstance(raw, dict):
+            messages = raw.get("messages", [])
+        elif isinstance(raw, list):
+            messages = raw
+        else:
+            messages = []
+        logger.debug(
+            "ghl.get_conversation_messages",
+            conversation_id=conversation_id,
+            count=len(messages),
+        )
+        return messages
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
@@ -238,50 +253,59 @@ async def search_conversations(contact_id: str) -> dict | None:
         First conversation dict, or None if no conversations found.
     """
     client = get_ghl_client()
-    response = await client.get(
-        "/conversations/search",
-        params={"contactId": contact_id},
-    )
-    response.raise_for_status()
-    data = response.json()
-    conversations = data.get("conversations", [])
-    if conversations:
+    try:
+        response = await client.get(
+            "/conversations/search",
+            params={"contactId": contact_id},
+        )
+        response.raise_for_status()
+        data = response.json()
+        conversations = data.get("conversations", [])
+        if conversations:
+            logger.debug(
+                "ghl.search_conversations",
+                contact_id=contact_id,
+                found=True,
+            )
+            return conversations[0]
         logger.debug(
             "ghl.search_conversations",
             contact_id=contact_id,
-            found=True,
+            found=False,
         )
-        return conversations[0]
-    logger.debug(
-        "ghl.search_conversations",
-        contact_id=contact_id,
-        found=False,
-    )
-    return None
+        return None
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
 async def add_tag(contact_id: str, tag: str) -> None:
     """Add a tag to a GHL contact."""
     client = get_ghl_client()
-    response = await client.post(
-        f"/contacts/{contact_id}/tags",
-        json={"tags": [tag]},
-    )
-    response.raise_for_status()
-    logger.info("ghl.add_tag", contact_id=contact_id, tag=tag)
+    try:
+        response = await client.post(
+            f"/contacts/{contact_id}/tags",
+            json={"tags": [tag]},
+        )
+        response.raise_for_status()
+        logger.info("ghl.add_tag", contact_id=contact_id, tag=tag)
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
 async def add_note(contact_id: str, body: str) -> None:
     """Add a note to a GHL contact."""
     client = get_ghl_client()
-    response = await client.post(
-        f"/contacts/{contact_id}/notes",
-        json={"body": body},
-    )
-    response.raise_for_status()
-    logger.info("ghl.add_note", contact_id=contact_id)
+    try:
+        response = await client.post(
+            f"/contacts/{contact_id}/notes",
+            json={"body": body},
+        )
+        response.raise_for_status()
+        logger.info("ghl.add_note", contact_id=contact_id)
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
@@ -296,13 +320,16 @@ async def update_contact(contact_id: str, data: dict) -> dict:
         Parsed JSON response.
     """
     client = get_ghl_client()
-    response = await client.patch(
-        f"/contacts/{contact_id}",
-        json=data,
-    )
-    response.raise_for_status()
-    logger.info("ghl.update_contact", contact_id=contact_id)
-    return response.json()
+    try:
+        response = await client.patch(
+            f"/contacts/{contact_id}",
+            json=data,
+        )
+        response.raise_for_status()
+        logger.info("ghl.update_contact", contact_id=contact_id)
+        return response.json()
+    finally:
+        await client.aclose()
 
 
 # --- Pipeline / Opportunity methods ---
@@ -312,22 +339,25 @@ async def update_contact(contact_id: str, data: dict) -> dict:
 async def _search_opportunity(pipeline_id: str, contact_id: str, location_id: str = "") -> str | None:
     """Return the first opportunity ID for the contact in the given pipeline."""
     client = get_ghl_client()
-    params = {"pipelineId": pipeline_id, "contactId": contact_id}
-    if location_id:
-        params["location_id"] = location_id
-    response = await client.get(
-        "/opportunities/search",
-        params=params,
-    )
-    response.raise_for_status()
-    data = response.json()
-    opportunities = data.get("opportunities", [])
-    if opportunities:
-        opp_id = opportunities[0].get("id")
-        logger.debug("ghl.opportunity_found", contact_id=contact_id, opportunity_id=opp_id)
-        return opp_id
-    logger.debug("ghl.opportunity_not_found", contact_id=contact_id)
-    return None
+    try:
+        params = {"pipelineId": pipeline_id, "contactId": contact_id}
+        if location_id:
+            params["location_id"] = location_id
+        response = await client.get(
+            "/opportunities/search",
+            params=params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        opportunities = data.get("opportunities", [])
+        if opportunities:
+            opp_id = opportunities[0].get("id")
+            logger.debug("ghl.opportunity_found", contact_id=contact_id, opportunity_id=opp_id)
+            return opp_id
+        logger.debug("ghl.opportunity_not_found", contact_id=contact_id)
+        return None
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
@@ -336,34 +366,40 @@ async def _create_opportunity(
 ) -> str:
     """Create a new opportunity in GHL and return its ID."""
     client = get_ghl_client()
-    response = await client.post(
-        "/opportunities/",
-        json={
-            "pipelineId": pipeline_id,
-            "pipelineStageId": stage_id,
-            "contactId": contact_id,
-            "name": "AI Lead",
-            "locationId": location_id,
-        },
-    )
-    response.raise_for_status()
-    data = response.json()
-    opp = data.get("opportunity", data)
-    opp_id = opp.get("id", "")
-    logger.info("ghl.opportunity_created", contact_id=contact_id, opportunity_id=opp_id, stage_id=stage_id)
-    return opp_id
+    try:
+        response = await client.post(
+            "/opportunities/",
+            json={
+                "pipelineId": pipeline_id,
+                "pipelineStageId": stage_id,
+                "contactId": contact_id,
+                "name": "AI Lead",
+                "locationId": location_id,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        opp = data.get("opportunity", data)
+        opp_id = opp.get("id", "")
+        logger.info("ghl.opportunity_created", contact_id=contact_id, opportunity_id=opp_id, stage_id=stage_id)
+        return opp_id
+    finally:
+        await client.aclose()
 
 
 @_retry_decorator
 async def _move_opportunity_stage(opportunity_id: str, stage_id: str) -> None:
     """Move an existing opportunity to a new pipeline stage."""
     client = get_ghl_client()
-    response = await client.put(
-        f"/opportunities/{opportunity_id}",
-        json={"pipelineStageId": stage_id},
-    )
-    response.raise_for_status()
-    logger.info("ghl.opportunity_stage_updated", opportunity_id=opportunity_id, stage_id=stage_id)
+    try:
+        response = await client.put(
+            f"/opportunities/{opportunity_id}",
+            json={"pipelineStageId": stage_id},
+        )
+        response.raise_for_status()
+        logger.info("ghl.opportunity_stage_updated", opportunity_id=opportunity_id, stage_id=stage_id)
+    finally:
+        await client.aclose()
 
 
 async def update_opportunity_stage(
