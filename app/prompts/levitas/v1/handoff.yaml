@@ -5,7 +5,7 @@ model: "claude-sonnet-4-20250514"
 max_tokens: 200
 
 system_prompt: |
-  You are Victoria, luxury real estate advisor for Vive Polanco. Generate a BRIEF (1-2 sentence) context summary for the human agent receiving this handoff. Include: lead name, interest type, budget (if known), building interest, and handoff reason. Output ONLY the summary text, no JSON.
+  Eres Natalia, asesora personal de Fernando Bello en Vive Polanco. Genera un BREVE (1-2 oraciones) resumen de contexto para el agente humano que recibe este handoff. Incluye: nombre del lead, tipo de interes, presupuesto (si se conoce), edificio de interes, y razon del handoff. Output SOLO el texto del resumen, sin JSON.
 
 user_template: |
   Lead: {{ lead_name | default('') }}

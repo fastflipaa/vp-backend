@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import structlog
@@ -219,6 +220,31 @@ class HumanAgentDetector:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_form_submission(body: str) -> bool:
+        """Detect Facebook/web form submission messages in GHL.
+
+        Form submissions typically contain structured data like:
+        - "Nombre: ...", "Email: ...", "Teléfono: ..."
+        - Key-value pairs separated by newlines
+        - JSON-like structured payloads
+        """
+        lower = body.lower()
+        # Count form-like patterns (key: value pairs)
+        form_patterns = re.findall(
+            r"(?:nombre|name|email|correo|tel[eé]fono|phone|interesado|interest"
+            r"|fuente|source|formulario|form|utm_|campaign|ad_id|fbclid)\s*[:=]",
+            lower,
+        )
+        if len(form_patterns) >= 2:
+            return True
+        # JSON payloads from form integrations
+        if body.strip().startswith("{") and any(
+            k in lower for k in ("firstname", "lastname", "email", "phone", "form")
+        ):
+            return True
+        return False
+
     def get_structured_turns(self) -> list[dict]:
         """Convert cached GHL messages to Claude-compatible conversation turns.
 
@@ -229,6 +255,7 @@ class HumanAgentDetector:
         Filters out:
         - Messages with empty/null body
         - Human agent messages (outbound from non-bot sources within agent_window)
+        - Facebook/web form submission messages (structured data, not real conversation)
 
         Returns messages in chronological order (oldest first), capped at 10,
         each body truncated to 500 chars.
@@ -247,6 +274,11 @@ class HumanAgentDetector:
 
             # Skip human agent messages (outbound from non-bot, non-empty source)
             if direction == "outbound" and source and source not in BOT_SOURCES:
+                continue
+
+            # Skip form submissions (Facebook lead forms, web forms, etc.)
+            if direction == "inbound" and self._is_form_submission(body):
+                logger.debug("structured_turns.skipped_form", preview=body[:80])
                 continue
 
             if direction == "inbound":

@@ -83,7 +83,19 @@ class ResponseDeliveryService:
         lead_phone = lead_phone or phone
 
         # 0. Strip trailing JSON metadata from Claude response
+        original_text = response_text
         response_text = ResponseDeliveryService._strip_json_metadata(response_text)
+        if response_text != original_text:
+            logger.warning(
+                "delivery.json_stripped",
+                trace_id=trace_id,
+                original_length=len(original_text),
+                stripped_length=len(response_text),
+                preview=original_text[:200],
+            )
+            # Increment monitoring counter so watchdog detects JSON parse failures
+            from app.services.monitoring.system_health_scanner import SystemHealthScanner
+            SystemHealthScanner.increment_error(self._redis, "json_parse")
 
         # 1. Clean response through PII filter
         cleaned = PIIFilter.clean(
@@ -275,21 +287,66 @@ class ResponseDeliveryService:
         LEVITAS prompts instruct Claude to append hidden JSON like:
         {"cadence": "explorer", "language": "es", ...}
         This must be removed before sending to the lead.
-        Catches any JSON object at the end OR anywhere in the text.
-        """
-        # First: strip any JSON block at the end of the message
-        stripped = re.sub(r'\s*\{[^{}]*\}\s*$', "", text).strip()
 
-        # Second: strip any remaining JSON blocks that look like metadata
-        # (contains known metadata keys anywhere in the text)
-        stripped = re.sub(
-            r'\{[^{}]*"(?:cadence|language|sentiment|interest_type|budget_min|'
-            r'matched_building|timeline|building_mentioned|confidence|response|'
-            r'next_action|tone_applied|escalate|escalation_reason|sentiment_confidence'
-            r')"[^{}]*\}',
-            "",
-            stripped,
-        ).strip()
+        Handles:
+        - Markdown code fences (```json ... ```)
+        - Nested JSON objects (suggestedSlots, etc.)
+        - Flat metadata JSON at end of message
+        """
+        # Step 0: Strip markdown code fences
+        stripped = re.sub(r"```(?:json)?\s*\n?", "", text).strip()
+        stripped = stripped.rstrip("`").strip()
+
+        # Step 1: Remove outermost JSON objects (handles nested braces)
+        def _remove_json_blocks(s: str) -> str:
+            result = s
+            while True:
+                start = result.find("{")
+                if start == -1:
+                    break
+                depth = 0
+                in_str = False
+                esc = False
+                end = -1
+                for i in range(start, len(result)):
+                    ch = result[i]
+                    if esc:
+                        esc = False
+                        continue
+                    if ch == "\\":
+                        esc = True
+                        continue
+                    if ch == '"' and not esc:
+                        in_str = not in_str
+                        continue
+                    if in_str:
+                        continue
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = i
+                            break
+                if end == -1:
+                    break
+                block = result[start : end + 1]
+                # Only strip if it looks like metadata (contains known keys)
+                metadata_keys = (
+                    "cadence", "language", "sentiment", "interest_type",
+                    "budget_min", "matched_building", "timeline",
+                    "building_mentioned", "confidence", "response",
+                    "next_action", "tone_applied", "escalate",
+                    "escalation_reason", "sentiment_confidence",
+                    "suggestedSlots", "needsMoreInfo",
+                )
+                if any(f'"{k}"' in block for k in metadata_keys):
+                    result = (result[:start] + result[end + 1:]).strip()
+                else:
+                    break  # Not metadata JSON, leave it
+            return result
+
+        stripped = _remove_json_blocks(stripped)
 
         return stripped if stripped else text
 

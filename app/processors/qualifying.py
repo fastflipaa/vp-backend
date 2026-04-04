@@ -227,25 +227,72 @@ def _extract_email_from_message(message: str) -> str | None:
     return None
 
 
+def _strip_markdown_fences(text: str) -> str:
+    """Remove markdown code fences (```json ... ```) from Claude output."""
+    stripped = re.sub(r"```(?:json)?\s*\n?", "", text).strip()
+    return stripped.rstrip("`").strip()
+
+
+def _extract_outermost_json(text: str) -> str | None:
+    """Extract the outermost JSON object from text, handling nested braces."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
 def _parse_claude_json(response_text: str) -> dict:
     """Parse Claude's JSON response, handling embedded text.
 
-    Claude sometimes returns text + JSON. We extract the JSON block.
+    Handles:
+    - Clean JSON
+    - JSON wrapped in markdown code fences (```json ... ```)
+    - JSON with nested objects
     """
-    # Try direct parse first
+    # Step 1: Strip markdown fences if present
+    cleaned = _strip_markdown_fences(response_text)
+
+    # Step 2: Try direct parse
     try:
-        return json.loads(response_text.strip())
+        return json.loads(cleaned.strip())
     except json.JSONDecodeError:
         pass
 
-    # Look for JSON block in response
-    json_match = re.search(r"\{[^{}]*\}", response_text, re.DOTALL)
-    if json_match:
+    # Step 3: Extract outermost JSON object (handles nested braces)
+    json_str = _extract_outermost_json(cleaned)
+    if json_str:
         try:
-            return json.loads(json_match.group())
+            return json.loads(json_str)
         except json.JSONDecodeError:
             pass
 
+    logger.warning(
+        "qualifying.json_parse_fallback",
+        raw_length=len(response_text),
+        preview=response_text[:200],
+    )
     return {}
 
 
