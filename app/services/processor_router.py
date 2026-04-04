@@ -1,10 +1,10 @@
 """ProcessorRouter -- dispatches messages to state-specific processors.
 
 Maps conversation states to processor classes. Terminal states (BROKER,
-CLOSED) and deferred states (RE_ENGAGE) return None, indicating no AI
-response should be generated.
+CLOSED) return None, indicating no AI response should be generated.
 
-FOLLOW_UP is now mapped to FollowUpProcessor (Phase 19).
+FOLLOW_UP is mapped to FollowUpProcessor (Phase 19).
+RE_ENGAGE is mapped to ReEngagementProcessor (Phase 20).
 
 Usage:
     router = ProcessorRouter()
@@ -20,6 +20,7 @@ import structlog
 
 from app.processors.followup import FollowUpProcessor
 from app.processors.greeting import GreetingProcessor
+from app.processors.reengagement import ReEngagementProcessor
 from app.processors.handoff import HandoffProcessor
 from app.processors.qualifying import QualifyingProcessor
 from app.processors.scheduling import SchedulingProcessor
@@ -27,8 +28,8 @@ from app.processors.scheduling import SchedulingProcessor
 logger = structlog.get_logger()
 
 # State -> Processor class mapping
-# Terminal states (BROKER, CLOSED) and deferred states (RE_ENGAGE)
-# are NOT mapped -- get_processor returns None for them.
+# Terminal states (BROKER, CLOSED) are NOT mapped -- get_processor
+# returns None for them.
 PROCESSOR_MAP: dict[str, type] = {
     "GREETING": GreetingProcessor,
     "QUALIFYING": QualifyingProcessor,
@@ -39,6 +40,8 @@ PROCESSOR_MAP: dict[str, type] = {
     "BUILDING_INFO": QualifyingProcessor,
     # FOLLOW_UP: 3-variation escalating follow-up (Phase 19)
     "FOLLOW_UP": FollowUpProcessor,
+    # RE_ENGAGE: Old-lead batch re-engagement with cross-sell (Phase 20)
+    "RE_ENGAGE": ReEngagementProcessor,
 }
 
 
@@ -46,13 +49,13 @@ class ProcessorRouter:
     """Routes messages to the correct state processor.
 
     Returns None for states that don't process AI responses:
-    - RE_ENGAGE: Handled by stale re-engagement scheduled task
     - BROKER: Terminal, no response
     - CLOSED: Terminal, no response
     - NON_RESPONSIVE: Awaiting re-engage or close
     - RECOVERY: Error recovery (restarts to GREETING via SM)
 
-    FOLLOW_UP is now handled by FollowUpProcessor (Phase 19).
+    FOLLOW_UP is handled by FollowUpProcessor (Phase 19).
+    RE_ENGAGE is handled by ReEngagementProcessor (Phase 20).
     """
 
     def get_processor(self, state: str) -> type | None:

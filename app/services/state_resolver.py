@@ -49,7 +49,8 @@ class StateResolver:
             is_auto_trigger: True if this is an auto-trigger message
                 (forces state to GREETING).
             message_type: Override type from webhook payload
-                (re_engagement, post_appointment, follow_up).
+                (re_engagement, post_appointment, follow_up,
+                old_lead_outreach).
 
         Returns:
             Dict with keys:
@@ -89,6 +90,9 @@ class StateResolver:
         elif message_type == "follow_up":
             current_state = "FOLLOW_UP"
             override_applied = "follow_up"
+        elif message_type == "old_lead_outreach":
+            current_state = "RE_ENGAGE"
+            override_applied = "old_lead_outreach"
 
         # 4. Default empty state to GREETING
         if not current_state:
