@@ -595,6 +595,49 @@ class LeadRepository:
             "last_ai_message": record["last_ai_message"] or "",
         }
 
+    # --- Retroactive tagging ---
+
+    async def find_non_responsive_for_tagging(
+        self, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Find NON_RESPONSIVE leads eligible for email-drip-ready tagging.
+
+        Returns leads in NON_RESPONSIVE state from the last 60 days with
+        valid GHL contact IDs. Used for retroactive tagging of leads from
+        the pre-drip period.
+
+        Leads older than 60 days are Phase 20 (old lead re-engagement).
+        """
+        async with self._driver.session() as session:
+            results = await session.execute_read(
+                self._find_non_responsive_for_tagging_tx, limit
+            )
+            logger.info(
+                "non_responsive_for_tagging_query",
+                found=len(results),
+                limit=limit,
+            )
+            return results
+
+    @staticmethod
+    async def _find_non_responsive_for_tagging_tx(
+        tx, limit: int
+    ) -> list[dict[str, Any]]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead)
+            WHERE l.current_state = 'NON_RESPONSIVE'
+            AND l.ghl_contact_id IS NOT NULL
+            AND l.updatedAt > datetime() - duration({days: 60})
+            RETURN l.ghl_contact_id AS contact_id,
+                   l.name AS name,
+                   l.updatedAt AS updated_at
+            LIMIT $limit
+            """,
+            limit=limit,
+        )
+        return [dict(record) async for record in result]
+
     # --- Utility ---
 
     @staticmethod
