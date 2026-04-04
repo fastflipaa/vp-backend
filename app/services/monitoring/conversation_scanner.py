@@ -450,14 +450,44 @@ class ConversationQualityScanner:
     # --- Self-healing actions ---
 
     async def _self_heal_repetition(self, contact_id: str, driver) -> None:
-        """Auto-advance lead's sub_state to break repetition loop."""
+        """Auto-advance lead's sub_state to break repetition loop.
+
+        Looks up the current sub_state and advances to the next valid one
+        in SUB_STATE_ORDER. If already at the last state, triggers HANDOFF.
+        """
         try:
+            from app.processors.qualifying import SUB_STATE_ORDER
             from app.repositories.lead_repository import LeadRepository
             lead_repo = LeadRepository(driver)
-            # Advance sub_state -- the next processor invocation will see a different sub_state
-            # and generate a different prompt, breaking the repetition cycle
-            await lead_repo.save_qualification_data(contact_id, {"sub_state": "advanced_by_monitor"})
-            logger.info("self_heal.repetition_sub_state_advanced", contact_id=contact_id)
+
+            # Get current sub_state directly from Neo4j
+            async with driver.session() as session:
+                result = await session.run(
+                    "MATCH (l:Lead {ghl_contact_id: $cid}) RETURN l.sub_state AS sub_state",
+                    cid=contact_id,
+                )
+                record = await result.single()
+            current_sub = (record["sub_state"] if record else None) or "QUAL_INTEREST"
+
+            if current_sub in SUB_STATE_ORDER:
+                idx = SUB_STATE_ORDER.index(current_sub)
+                if idx < len(SUB_STATE_ORDER) - 1:
+                    next_sub = SUB_STATE_ORDER[idx + 1]
+                    await lead_repo.save_qualification_data(contact_id, {"sub_state": next_sub})
+                else:
+                    # Already at last sub-state (QUAL_BUILDING_MATCH) — trigger handoff
+                    next_sub = "HANDOFF"
+                    await lead_repo.save_state(contact_id, "HANDOFF")
+            else:
+                # Unknown sub_state, advance to QUAL_BUDGET (skip interest)
+                next_sub = "QUAL_BUDGET"
+                await lead_repo.save_qualification_data(contact_id, {"sub_state": next_sub})
+            logger.info(
+                "self_heal.repetition_sub_state_advanced",
+                contact_id=contact_id,
+                from_sub=current_sub,
+                to_sub=next_sub,
+            )
         except Exception:
             logger.exception("self_heal.repetition_failed", contact_id=contact_id)
 

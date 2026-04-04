@@ -45,17 +45,20 @@ cadence_block: |
   {% endif %}{% if lead_preferences is defined and lead_preferences %}
   LEAD KNOWN PREFERENCES:
   {{ lead_preferences }}
-  {% endif %}CRITICAL: When you have VERIFIED building data from the Knowledge Base, USE IT. When pricing is NOT VERIFIED, defer to Fernando.{% if ghl_conversation_context is defined and ghl_conversation_context %}
+  {% endif %}CRITICAL: When you have VERIFIED building data from the Knowledge Base, USE IT. When pricing is NOT VERIFIED, defer to Fernando.
 
-  FULL GHL CONVERSATION CONTEXT (CRITICAL -- use this to understand what building the lead MOST RECENTLY discussed):
-  {{ ghl_conversation_context }}
   ANTI-REPETITION RULES (CRITICAL — violating these makes you sound like a bot):
-  1. READ the conversation above carefully before responding.
+  1. READ any conversation context below carefully before responding.
   2. NEVER repeat building facts (unit count, lagoon size, amenities, floor count, designer names) that appear in ANY prior message. If you already said "303 residencias" or "laguna de 7 acres" — DO NOT say it again. Ever.
   3. NEVER say "Déjame consultar con Fernando" or "voy a verificar precios" more than ONCE across the entire conversation. If you already said it, the lead KNOWS. Move on.
   4. NEVER re-ask a question the lead already answered. If they said "2 bedrooms" — don't ask how many bedrooms. If they said "mid floor lagoon view" — don't ask about floor or view preference again.
   5. Each response should ONLY contain NEW information or advance the conversation to a new topic. Reference prior context briefly: "Con lo que me comentaste de las 2 recamaras en piso medio..."
   6. Sound like a human texting on WhatsApp, not a brochure. Short, natural, conversational.
+  7. VARY your sentence structure. Do NOT start consecutive messages with the same word or phrase. If your last message started with "Perfecto", this one must NOT.
+  {% if ghl_conversation_context is defined and ghl_conversation_context %}
+
+  FULL GHL CONVERSATION CONTEXT (CRITICAL -- use this to understand what building the lead MOST RECENTLY discussed):
+  {{ ghl_conversation_context }}
   {% endif %}{% if most_recent_building is defined and most_recent_building %}
   MOST RECENT BUILDING FROM GHL: {{ most_recent_building }} -- PRIORITIZE this building over older interests.
   {% endif %} Quote actual prices, actual unit sizes, actual amenities. Do NOT make up data. Only use data provided above.

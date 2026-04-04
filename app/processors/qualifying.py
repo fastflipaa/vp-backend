@@ -296,12 +296,35 @@ def _parse_claude_json(response_text: str) -> dict:
     return {}
 
 
-def _format_building_context(buildings: list[dict]) -> str:
+def _fernando_already_mentioned(conversation_context: dict) -> bool:
+    """Check if Fernando pricing deferral was already sent in conversation."""
+    # Check structured turns (Claude API messages)
+    for turn in conversation_context.get("structured_turns") or []:
+        if turn.get("role") == "assistant":
+            content = (turn.get("content") or "").lower()
+            if any(phrase in content for phrase in [
+                "consultar con fernando", "verificar con fernando",
+                "check with fernando", "confirmar precios",
+                "voy a verificar", "consultar precios",
+                "le pregunto a fernando", "consultarle a fernando",
+            ]):
+                return True
+    # Check GHL context text
+    ghl_ctx = (conversation_context.get("ghlConversationContext") or "").lower()
+    if "consultar con fernando" in ghl_ctx or "verificar con fernando" in ghl_ctx:
+        return True
+    return False
+
+
+def _format_building_context(buildings: list[dict], fernando_deferred: bool = False) -> str:
     """Format building data for Claude's context, respecting pricing_verified flag.
 
     When pricing_verified is False or price data is 0/NULL, injects an explicit
     instruction for Claude to defer pricing questions to Fernando/Lorena.
     This prevents hallucination of prices — a legal liability risk.
+
+    If fernando_deferred is True, the deferral was already sent — instruct Claude
+    NOT to repeat it and instead continue qualifying naturally.
     """
     if not buildings:
         return ""
@@ -345,15 +368,20 @@ def _format_building_context(buildings: list[dict]) -> str:
                     else:
                         lines.append(f"    Unit: {uname} ({beds} bed)")
         else:
-            lines.append(
-                f"  PRICING: NOT VERIFIED — You do NOT have pricing for {name}. "
-                f"ONCE (first time only): mention you will check with Fernando. "
-                f"AFTER THAT: if the GHL conversation already shows you said you would check with Fernando, "
-                f"DO NOT say it again. Just continue qualifying naturally — ask about their preferences, "
-                f"timeline, what matters most to them. Repeating 'voy a consultar con Fernando' every message sounds robotic. "
-                f"Keep next_action as \"continue_qualifying\". "
-                f"ONLY set \"handoff_fernando\" if the lead explicitly asks to speak with a human."
-            )
+            if fernando_deferred:
+                lines.append(
+                    f"  PRICING: NOT VERIFIED — No tienes precios para {name}. "
+                    f"YA le dijiste al lead que ibas a consultar con Fernando. "
+                    f"NO lo repitas. NO digas 'voy a verificar' ni 'consultar con Fernando' de nuevo. "
+                    f"En cambio: continua calificando naturalmente — pregunta sobre sus preferencias, "
+                    f"timeline, que es lo mas importante para ellos. Avanza la conversacion."
+                )
+            else:
+                lines.append(
+                    f"  PRICING: NOT VERIFIED — No tienes precios para {name}. "
+                    f"Menciona UNA VEZ que vas a consultar con Fernando para los precios exactos. "
+                    f"Luego continua calificando — no esperes una respuesta sobre precios."
+                )
             if b.get("description_es"):
                 lines.append(f"  Description: {b['description_es']}")
 
@@ -472,11 +500,12 @@ class QualifyingProcessor(BaseProcessor):
         # Fetch building data with pricing_verified context
         building_context = ""
         phone = lead_data.get("phone", "")
+        fernando_deferred = _fernando_already_mentioned(conversation_context)
         if self._building_repo and phone:
             try:
                 buildings = await self._building_repo.get_buildings_for_lead(phone)
                 if buildings:
-                    building_context = _format_building_context(buildings)
+                    building_context = _format_building_context(buildings, fernando_deferred)
             except Exception:
                 logger.exception(
                     "qualifying.building_context_failed", trace_id=trace_id
@@ -734,12 +763,13 @@ class QualifyingProcessor(BaseProcessor):
 
         # Fetch building data + GraphRAG recommendations
         building_context = ""
+        fernando_deferred = _fernando_already_mentioned(conversation_context)
         if self._building_repo and phone:
             try:
                 buildings = await self._building_repo.get_buildings_for_lead(phone)
                 if buildings:
                     # Format building data with pricing_verified checks
-                    building_context = _format_building_context(buildings)
+                    building_context = _format_building_context(buildings, fernando_deferred)
                     building_ids = [
                         b["building_id"] for b in buildings if b.get("building_id")
                     ]
