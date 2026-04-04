@@ -240,7 +240,6 @@ def old_lead_outreach_batch() -> dict:
                     "message": "",
                     "direction": "outbound",
                     "messageType": "old_lead_outreach",
-                    "isAutoTrigger": True,
                     "tags": [],
                     "leadName": name,
                 }

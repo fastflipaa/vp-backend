@@ -26,8 +26,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
-
 import structlog
 
 from app.processors.base import BaseProcessor, ProcessorResult
@@ -62,7 +60,7 @@ class ReEngagementProcessor(BaseProcessor):
         prompt_builder: PromptBuilder,
         lead_repo: LeadRepository,
         conversation_repo: ConversationRepository,
-        building_repo: BuildingRepository = None,
+        building_repo: BuildingRepository | None = None,
         **kwargs,
     ) -> None:
         self._claude = claude_service
@@ -226,7 +224,7 @@ class ReEngagementProcessor(BaseProcessor):
             new_recommendations = [b.get("name", "") for b in cross_sell_results if b.get("name")]
             updated_list = list(set(recommended_buildings + new_recommendations))
             await self._lead_repo.record_recommended_buildings(
-                contact_id, json.dumps(updated_list)
+                contact_id, updated_list
             )
             logger.info(
                 "reengagement.buildings_recorded",
