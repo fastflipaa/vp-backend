@@ -35,6 +35,7 @@ import app.tasks.scheduled.lead_operator  # noqa: F401, E402
 import app.tasks.scheduled.conversation_scorer  # noqa: F401, E402
 import app.tasks.scheduled.lesson_lifecycle  # noqa: F401, E402
 import app.tasks.scheduled.learning_report  # noqa: F401, E402
+import app.tasks.scheduled.old_lead_outreach  # noqa: F401, E402
 
 celery_app.conf.update(
     # Serialization
@@ -120,5 +121,9 @@ celery_app.conf.beat_schedule = {
     "learning-report-weekly-mon-9am": {
         "task": "scheduled.learning_report",
         "schedule": crontab(hour=9, minute=0, day_of_week=1),  # Monday 9 AM CDMX
+    },
+    "old-lead-outreach-daily": {
+        "task": "scheduled.old_lead_outreach",
+        "schedule": crontab(hour=9, minute=15),  # 9:15 AM CDMX daily -- spreads sends via ETA
     },
 }

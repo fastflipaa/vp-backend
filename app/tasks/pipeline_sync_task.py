@@ -36,6 +36,7 @@ _STATE_TO_STAGE: dict[str, str] = {
     "BROKER": "afd2783a-a9ec-4ce3-b837-e925f1156f94",
     "CLOSED": "57ed155f-d423-4a47-a4df-18be69c74550",
     "NON_RESPONSIVE": "57ed155f-d423-4a47-a4df-18be69c74550",
+    "DEAD_LOST": "57ed155f-d423-4a47-a4df-18be69c74550",  # Maps to "Not Qualified Leads" -- update if dedicated dead stage exists
 }
 
 

@@ -256,6 +256,28 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 )
             except Exception:
                 logger.exception("followup_reset_failed", trace_id=trace_id)
+        elif current_state == "RE_ENGAGE" and inbound.direction == "inbound" and inbound.message:
+            # Lead replied to old-lead outreach -- re-enter qualifying with re-engagement context
+            try:
+                await lead_repo.save_state(contact_id, "QUALIFYING")
+                # Do NOT reset reengagement_count -- it tracks historical attempts
+                current_state = "QUALIFYING"
+                is_new_lead = False
+
+                drip_reentry_context = {
+                    "is_reengagement_reentry": True,
+                    "returning_lead": True,
+                }
+
+                logger.info(
+                    "reengagement_reentry.state_reset",
+                    trace_id=trace_id,
+                    contact_id=contact_id,
+                    from_state="RE_ENGAGE",
+                    to_state="QUALIFYING",
+                )
+            except Exception:
+                logger.exception("reengagement_reentry.reset_failed", trace_id=trace_id)
 
         # ── Stage 2: Human Agent Check ──
         conversation_ctx: dict = {}
@@ -374,7 +396,7 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             "lead_repo": lead_repo,
             "conversation_repo": conv_repo,
         }
-        if current_state in ("QUALIFYING", "BUILDING_INFO"):
+        if current_state in ("QUALIFYING", "BUILDING_INFO", "RE_ENGAGE"):
             processor_kwargs["building_repo"] = building_repo
 
         processor = processor_class(**processor_kwargs)
@@ -435,6 +457,33 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
             )
             logger.info(
                 "drip_reentry_context_injected",
+                trace_id=trace_id,
+                language=detected_lang,
+            )
+
+        # -- Stage 5.6b: Re-Engagement Re-Entry Context Injection --
+        if drip_reentry_context.get("is_reengagement_reentry"):
+            reeng_text = (
+                "CONTEXTO IMPORTANTE: Este lead respondio a un mensaje de re-engagement despues de mucho "
+                "tiempo sin contacto. Es un lead que habia quedado frio pero mostro interes de nuevo. "
+                "Reconoce su regreso con entusiasmo genuino. No menciones que es un re-contacto -- "
+                "simplemente retoma naturalmente. Pregunta en que le puedes ayudar y en que tipo de "
+                "propiedad esta interesado ahora."
+            )
+            if detected_lang == "en":
+                reeng_text = (
+                    "IMPORTANT CONTEXT: This lead replied to a re-engagement message after a long period "
+                    "of no contact. They had gone cold but showed interest again. Acknowledge their return "
+                    "with genuine enthusiasm. Don't mention re-engagement -- simply resume naturally. "
+                    "Ask how you can help and what type of property they're interested in now."
+                )
+            claude_service.learning_context = (
+                (claude_service.learning_context + "\n\n" + reeng_text)
+                if claude_service.learning_context
+                else reeng_text
+            )
+            logger.info(
+                "reengagement_reentry_context_injected",
                 trace_id=trace_id,
                 language=detected_lang,
             )
