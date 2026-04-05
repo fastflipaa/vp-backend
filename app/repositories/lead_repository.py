@@ -962,6 +962,238 @@ class LeadRepository:
             cid=contact_id,
         )
 
+    # --- Conversation summary ---
+
+    async def get_conversation_for_summary(
+        self, contact_id: str
+    ) -> dict[str, Any]:
+        """Fetch full conversation data needed for summary generation.
+
+        Returns lead properties, chronological interactions (last 50 max),
+        interested buildings, and total interaction count.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_conversation_for_summary_tx, contact_id
+            )
+            logger.debug(
+                "conversation_for_summary_read",
+                contact_id=contact_id,
+                total_interactions=result.get("total_interactions", 0),
+            )
+            return result
+
+    @staticmethod
+    async def _get_conversation_for_summary_tx(
+        tx, contact_id: str
+    ) -> dict[str, Any]:
+        # Lead properties
+        lead_result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            RETURN l.name AS name,
+                   l.language AS language,
+                   l.interestType AS interestType,
+                   l.budgetMin AS budgetMin,
+                   l.budgetMax AS budgetMax,
+                   l.timeline AS timeline,
+                   l.current_state AS current_state,
+                   l.sub_state AS sub_state
+            """,
+            cid=contact_id,
+        )
+        lead_record = await lead_result.single()
+        lead = dict(lead_record) if lead_record else {}
+
+        # Building interests
+        buildings_result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})-[:INTERESTED_IN]->(b:Building)
+            RETURN b.name AS name
+            """,
+            cid=contact_id,
+        )
+        buildings = [record["name"] async for record in buildings_result]
+
+        # Total interaction count
+        count_result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})-[:HAS_INTERACTION]->(i:Interaction)
+            RETURN count(i) AS total
+            """,
+            cid=contact_id,
+        )
+        count_record = await count_result.single()
+        total_interactions = count_record["total"] if count_record else 0
+
+        # Last 50 interactions in chronological order (ASC)
+        interactions_result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})-[:HAS_INTERACTION]->(i:Interaction)
+            RETURN i.role AS role, i.content AS content, i.created_at AS created_at
+            ORDER BY i.created_at ASC
+            LIMIT 50
+            """,
+            cid=contact_id,
+        )
+        interactions = [dict(r) async for r in interactions_result]
+
+        return {
+            "lead": lead,
+            "interactions": interactions,
+            "buildings": buildings,
+            "total_interactions": total_interactions,
+        }
+
+    async def save_conversation_summary(
+        self,
+        contact_id: str,
+        summary_text: str,
+        summary_data: dict[str, str],
+    ) -> None:
+        """Create or update a ConversationSummary node linked to the Lead.
+
+        Uses MERGE on the relationship so exactly one summary exists per
+        lead. The ``summary_data`` dict should contain ``journey``,
+        ``preferences``, and ``personality`` keys.
+        """
+        async with self._driver.session() as session:
+            await session.execute_write(
+                self._save_conversation_summary_tx,
+                contact_id,
+                summary_text,
+                summary_data,
+            )
+            logger.info(
+                "conversation_summary_saved",
+                contact_id=contact_id,
+                summary_length=len(summary_text),
+            )
+
+    @staticmethod
+    async def _save_conversation_summary_tx(
+        tx,
+        contact_id: str,
+        summary_text: str,
+        summary_data: dict[str, str],
+    ) -> None:
+        await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            MERGE (l)-[:HAS_SUMMARY]->(s:ConversationSummary)
+            SET s.summary = $summary_text,
+                s.journey = $journey,
+                s.preferences = $preferences,
+                s.personality = $personality,
+                s.interaction_count_at_generation = $interaction_count,
+                s.generated_at = datetime(),
+                s.updated_at = datetime()
+            """,
+            cid=contact_id,
+            summary_text=summary_text,
+            journey=summary_data.get("journey", ""),
+            preferences=summary_data.get("preferences", ""),
+            personality=summary_data.get("personality", ""),
+            interaction_count=summary_data.get("interaction_count", 0),
+        )
+
+    async def get_conversation_summary(
+        self, contact_id: str
+    ) -> dict[str, Any] | None:
+        """Read the existing ConversationSummary for a lead.
+
+        Returns None if no summary exists. Otherwise returns a dict with
+        summary, journey, preferences, personality, interaction_count_at_generation,
+        and generated_at fields.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_conversation_summary_tx, contact_id
+            )
+            logger.debug(
+                "conversation_summary_read",
+                contact_id=contact_id,
+                has_summary=result is not None,
+            )
+            return result
+
+    @staticmethod
+    async def _get_conversation_summary_tx(
+        tx, contact_id: str
+    ) -> dict[str, Any] | None:
+        result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})-[:HAS_SUMMARY]->(s:ConversationSummary)
+            RETURN s.summary AS summary,
+                   s.journey AS journey,
+                   s.preferences AS preferences,
+                   s.personality AS personality,
+                   s.interaction_count_at_generation AS interaction_count_at_generation,
+                   s.generated_at AS generated_at
+            """,
+            cid=contact_id,
+        )
+        record = await result.single()
+        return dict(record) if record else None
+
+    async def should_refresh_summary(
+        self, contact_id: str, refresh_interval: int
+    ) -> dict[str, Any]:
+        """Check if a conversation summary needs refresh.
+
+        Returns a dict with total_interactions, has_summary, needs_refresh,
+        and last_count. A refresh is needed when no summary exists or when
+        total interactions exceed the last generation count by at least
+        ``refresh_interval``.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._should_refresh_summary_tx, contact_id, refresh_interval
+            )
+            logger.debug(
+                "summary_refresh_check",
+                contact_id=contact_id,
+                needs_refresh=result.get("needs_refresh"),
+            )
+            return result
+
+    @staticmethod
+    async def _should_refresh_summary_tx(
+        tx, contact_id: str, refresh_interval: int
+    ) -> dict[str, Any]:
+        result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            OPTIONAL MATCH (l)-[:HAS_SUMMARY]->(s:ConversationSummary)
+            WITH l, s,
+                 size([(l)-[:HAS_INTERACTION]->(i:Interaction) | i]) AS total_interactions
+            RETURN total_interactions,
+                   s IS NOT NULL AS has_summary,
+                   s.interaction_count_at_generation AS last_count,
+                   CASE
+                     WHEN s IS NULL THEN true
+                     WHEN total_interactions - coalesce(s.interaction_count_at_generation, 0) >= $refresh_interval THEN true
+                     ELSE false
+                   END AS needs_refresh
+            """,
+            cid=contact_id,
+            refresh_interval=refresh_interval,
+        )
+        record = await result.single()
+        if not record:
+            return {
+                "total_interactions": 0,
+                "has_summary": False,
+                "needs_refresh": False,
+                "last_count": None,
+            }
+        return {
+            "total_interactions": record["total_interactions"],
+            "has_summary": record["has_summary"],
+            "needs_refresh": record["needs_refresh"],
+            "last_count": record["last_count"],
+        }
+
     # --- Utility ---
 
     @staticmethod
