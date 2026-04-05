@@ -294,6 +294,26 @@ async def add_tag(contact_id: str, tag: str) -> None:
 
 
 @_retry_decorator
+async def remove_tag(contact_id: str, tag: str) -> None:
+    """Remove a tag from a GHL contact.
+
+    Uses DELETE /contacts/:contactId/tags with JSON body.
+    Required for mutually exclusive tier tags (hot/warm/cold).
+    """
+    client = get_ghl_client()
+    try:
+        response = await client.request(
+            "DELETE",
+            f"/contacts/{contact_id}/tags",
+            json={"tags": [tag]},
+        )
+        response.raise_for_status()
+        logger.info("ghl.remove_tag", contact_id=contact_id, tag=tag)
+    finally:
+        await client.aclose()
+
+
+@_retry_decorator
 async def add_note(contact_id: str, body: str) -> None:
     """Add a note to a GHL contact."""
     client = get_ghl_client()

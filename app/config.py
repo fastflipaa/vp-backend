@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     OUTREACH_MAX_PER_QUARTER: int = 2      # Max attempts per rolling 90-day window
     OUTREACH_MIN_INACTIVE_DAYS: int = 30   # Minimum days inactive before eligible
 
+    # Lead scoring (Phase 21)
+    LEAD_SCORE_HOT_THRESHOLD: int = 80      # Score >= 80 = hot-lead
+    LEAD_SCORE_WARM_THRESHOLD: int = 50     # Score 50-79 = warm-lead, below 50 = cold-lead
+    LEAD_SCORE_ENABLED: bool = True          # Kill switch for scoring
+    SUMMARY_INTERACTION_THRESHOLD: int = 10  # Min interactions for conversation summary
+    SUMMARY_REFRESH_INTERVAL: int = 5        # New interactions before summary refresh
+
     # Derived Redis URLs for different databases
     @property
     def redis_broker_url(self) -> str:

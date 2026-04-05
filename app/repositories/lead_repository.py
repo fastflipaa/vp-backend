@@ -962,6 +962,144 @@ class LeadRepository:
             cid=contact_id,
         )
 
+    # --- Lead scoring (Phase 21) ---
+
+    async def get_scoring_signals(self, contact_id: str) -> dict[str, Any]:
+        """Fetch all data needed to compute a lead score.
+
+        Returns budget, timeline, interest type, interaction counts,
+        quality interaction count, recent reply times (last 5 user
+        replies), interested buildings, and current score/tier.
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                self._get_scoring_signals_tx, contact_id
+            )
+            logger.debug("scoring_signals_read", contact_id=contact_id)
+            return result
+
+    @staticmethod
+    async def _get_scoring_signals_tx(tx, contact_id: str) -> dict[str, Any]:
+        # Main query: lead properties + interaction counts + quality + buildings
+        result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})
+            OPTIONAL MATCH (l)-[:HAS_INTERACTION]->(i:Interaction)
+            OPTIONAL MATCH (l)-[:INTERESTED_IN]->(b:Building)
+            WITH l,
+                 collect(DISTINCT b.name) AS building_names,
+                 collect(DISTINCT i) AS all_interactions
+            WITH l, building_names,
+                 size(all_interactions) AS total_interactions,
+                 size([x IN all_interactions WHERE x.role = 'user']) AS user_interactions,
+                 size([x IN all_interactions WHERE x.role = 'assistant']) AS assistant_interactions,
+                 size([x IN all_interactions WHERE x.role = 'user'
+                       AND toLower(coalesce(x.content, '')) =~ '.*(precio|price|visita|visit|financiamiento|financing|amenidades|amenities|credito|hipoteca|mortgage|metros|recamara|bedroom|penthouse).*'
+                 ]) AS quality_interactions
+            RETURN l.budgetMin AS budgetMin,
+                   l.budgetMax AS budgetMax,
+                   l.interestType AS interestType,
+                   l.timeline AS timeline,
+                   total_interactions,
+                   user_interactions,
+                   assistant_interactions,
+                   quality_interactions,
+                   building_names,
+                   l.lead_score AS current_score,
+                   l.lead_tier AS current_tier
+            """,
+            cid=contact_id,
+        )
+        record = await result.single()
+        if not record:
+            return {
+                "budgetMin": None,
+                "budgetMax": None,
+                "interestType": None,
+                "timeline": None,
+                "total_interactions": 0,
+                "user_interactions": 0,
+                "assistant_interactions": 0,
+                "quality_interactions": 0,
+                "recent_reply_times": [],
+                "building_names": [],
+                "current_score": None,
+                "current_tier": None,
+            }
+
+        base = dict(record)
+
+        # Second query: recent reply times (last 5 user replies)
+        # Match each user reply to the closest preceding assistant message
+        reply_result = await tx.run(
+            """
+            MATCH (l:Lead {ghl_contact_id: $cid})-[:HAS_INTERACTION]->(u:Interaction {role: 'user'})
+            WITH l, u ORDER BY u.created_at DESC LIMIT 5
+            MATCH (l)-[:HAS_INTERACTION]->(a:Interaction {role: 'assistant'})
+            WHERE a.created_at < u.created_at
+            WITH u, a ORDER BY a.created_at DESC
+            WITH u, head(collect(a)) AS prev_assistant
+            WHERE prev_assistant IS NOT NULL
+            RETURN duration.between(prev_assistant.created_at, u.created_at).minutes
+                   + duration.between(prev_assistant.created_at, u.created_at).seconds / 60.0
+                   AS reply_minutes
+            ORDER BY u.created_at DESC
+            """,
+            cid=contact_id,
+        )
+        reply_times: list[float] = []
+        async for rec in reply_result:
+            val = rec["reply_minutes"]
+            if val is not None:
+                reply_times.append(float(val))
+
+        base["recent_reply_times"] = reply_times
+        base["building_names"] = base.get("building_names") or []
+        return base
+
+    async def save_lead_score(
+        self,
+        contact_id: str,
+        score: int,
+        tier: str,
+        factor_breakdown: dict[str, Any],
+    ) -> None:
+        """Persist computed lead score on the Lead node.
+
+        Stores score, tier, JSON-serialized factor breakdown, and
+        timestamps for audit and debugging.
+        """
+        factors_json = json.dumps(factor_breakdown, ensure_ascii=False, default=str)
+        async with self._driver.session() as session:
+            await session.execute_write(
+                self._save_lead_score_tx, contact_id, score, tier, factors_json
+            )
+            logger.info(
+                "lead_score_saved",
+                contact_id=contact_id,
+                score=score,
+                tier=tier,
+            )
+
+    @staticmethod
+    async def _save_lead_score_tx(
+        tx, contact_id: str, score: int, tier: str, factors_json: str
+    ) -> None:
+        await tx.run(
+            """
+            MERGE (l:Lead {ghl_contact_id: $cid})
+            SET l.lead_score = $score,
+                l.lead_tier = $tier,
+                l.lead_score_factors = $factors_json,
+                l.lead_score_updated_at = datetime(),
+                l.updatedAt = datetime()
+            """,
+            cid=contact_id,
+            score=score,
+            tier=tier,
+            factors_json=factors_json,
+        )
+
     # --- Conversation summary ---
 
     async def get_conversation_for_summary(
