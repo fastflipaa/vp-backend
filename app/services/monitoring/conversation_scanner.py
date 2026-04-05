@@ -155,11 +155,14 @@ class ConversationQualityScanner:
                 counts["leads_scanned"] += 1
 
                 try:
-                    # Fetch last 10 interactions for this lead
+                    # Fetch last 10 interactions from the CURRENT system era (last 7 days)
+                    # Older messages are from previous outreach systems and should not
+                    # trigger repetition alerts for the current AI agent
                     async with driver.session() as session:
                         result = await session.run(
                             """
                             MATCH (l:Lead {phone: $phone})-[:HAS_INTERACTION]->(i:Interaction)
+                            WHERE i.created_at > datetime() - duration({days: 7})
                             RETURN i.role AS role, i.content AS content, i.created_at AS created_at
                             ORDER BY i.created_at DESC
                             LIMIT 10
