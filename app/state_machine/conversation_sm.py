@@ -128,6 +128,19 @@ class ConversationSM(StateMachine):
         | RE_ENGAGE.to(RECOVERY)
     )
 
+    # Scheduled task transitions -- follow-up and re-engagement enter via
+    # external schedulers that set state directly in Neo4j, but the SM graph
+    # must have incoming edges for python-statemachine graph validation.
+    enter_followup = (
+        QUALIFYING.to(FOLLOW_UP)
+        | NON_RESPONSIVE.to(FOLLOW_UP)
+    )
+
+    enter_reengage = (
+        NON_RESPONSIVE.to(RE_ENGAGE)
+        | CLOSED.to(RE_ENGAGE)
+    )
+
     # --- Guard conditions ---
 
     def has_name_and_interest(self, lead_name: str = "", interested: bool = False, **kwargs) -> bool:
