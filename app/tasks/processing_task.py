@@ -488,6 +488,68 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 language=detected_lang,
             )
 
+        # -- Stage 5.7: Conversation Summary + Score Context Injection --
+        if settings.LEAD_SCORE_ENABLED and contact_id:
+            try:
+                from app.services.conversation_summary import ConversationSummaryService
+
+                _summary_service = ConversationSummaryService(lead_repo, claude_service)
+                summary_text = await _summary_service.get_summary_for_prompt(contact_id)
+
+                if summary_text:
+                    claude_service.learning_context = (
+                        (claude_service.learning_context + "\n\n" + summary_text)
+                        if claude_service.learning_context
+                        else summary_text
+                    )
+                    logger.info(
+                        "summary_context_injected",
+                        trace_id=trace_id,
+                        summary_length=len(summary_text),
+                    )
+
+                # Score context injection -- adapt AI behavior based on lead score
+                lead_score = lead_data.get("lead_score") if lead_data else None
+                if lead_score is None:
+                    # Try reading from Neo4j (lead_data might not have it yet)
+                    try:
+                        scoring_signals = await lead_repo.get_scoring_signals(contact_id)
+                        lead_score = scoring_signals.get("current_score")
+                    except Exception:
+                        pass
+
+                if lead_score is not None:
+                    if lead_score >= settings.LEAD_SCORE_HOT_THRESHOLD:
+                        score_context = (
+                            "PRIORIDAD ALTA: Este lead tiene un score de compra alto ({score}/100). "
+                            "Es un prospecto caliente -- ofrece atencion premium, opciones adicionales, "
+                            "y facilita la conexion con Fernando lo antes posible. Muestra urgencia amable."
+                        ).format(score=lead_score)
+                    elif lead_score >= settings.LEAD_SCORE_WARM_THRESHOLD:
+                        score_context = (
+                            "LEAD TIBIO: Score de compra {score}/100. Buen nivel de interes. "
+                            "Manten tono informativo y proactivo. Ofrece informacion sin presionar."
+                        ).format(score=lead_score)
+                    else:
+                        score_context = (
+                            "LEAD FRIO: Score de compra {score}/100. Contacto temprano o bajo interes. "
+                            "Se amable pero eficiente. No insistas demasiado -- responde lo que preguntan."
+                        ).format(score=lead_score)
+
+                    claude_service.learning_context = (
+                        (claude_service.learning_context + "\n\n" + score_context)
+                        if claude_service.learning_context
+                        else score_context
+                    )
+                    logger.debug(
+                        "score_context_injected",
+                        trace_id=trace_id,
+                        score=lead_score,
+                    )
+            except Exception:
+                logger.exception("summary_score_injection_failed", trace_id=trace_id)
+                # Fail-open
+
         # Merge lead_data with additional context
         lead_data_with_context = {
             **lead_data,
@@ -668,6 +730,113 @@ def process_message(self, payload: dict, trace_id: str) -> dict:
                 await ghl_service.add_note(contact_id, note_body)
             except Exception:
                 logger.warning("ghl_note_write_failed", trace_id=trace_id)
+
+        # -- Stage 8.7: Lead Score Computation + GHL Sync --
+        if settings.LEAD_SCORE_ENABLED and contact_id and inbound.direction == "inbound":
+            try:
+                from app.services.lead_scoring import LeadScoringService
+                from app.services.monitoring.alert_manager import AlertManager, AlertLevel
+                from app.services.ghl_service import update_contact, add_tag, remove_tag
+
+                lead_scoring_service = LeadScoringService(lead_repo)
+                score_result = await lead_scoring_service.compute_score(
+                    contact_id, enriched_context=enriched_context
+                )
+
+                if score_result:
+                    score = score_result["score"]
+                    tier = score_result["tier"]
+                    previous_score = score_result.get("previous_score")
+                    crossed_hot = score_result.get("crossed_hot", False)
+
+                    # GHL custom field sync (write numeric score)
+                    try:
+                        await update_contact(contact_id, {
+                            "customFields": [
+                                {"key": "lead_score", "value": str(score)}
+                            ]
+                        })
+                    except Exception:
+                        logger.warning("lead_score.ghl_custom_field_failed", trace_id=trace_id)
+
+                    # GHL tier tag sync (mutually exclusive)
+                    tier_tags = {"hot": "hot-lead", "warm": "warm-lead", "cold": "cold-lead"}
+                    new_tag = tier_tags[tier]
+                    # Remove all other tier tags, then add the correct one
+                    for t_tier, t_tag in tier_tags.items():
+                        if t_tier != tier:
+                            try:
+                                await remove_tag(contact_id, t_tag)
+                            except Exception:
+                                pass  # Tag might not exist -- that's fine
+                    try:
+                        await add_tag(contact_id, new_tag)
+                    except Exception:
+                        logger.warning("lead_score.ghl_tag_failed", trace_id=trace_id, tag=new_tag)
+
+                    # Slack hot-lead alert (when score crosses 80+ threshold)
+                    if crossed_hot:
+                        try:
+                            alert_mgr = AlertManager(_redis_client)
+                            building_info = lead_data.get("building_source", "unknown")
+                            factors = score_result.get("factors", {})
+                            # Build actionable context per user requirement
+                            trigger_info = []
+                            for factor_name, factor_data in factors.items():
+                                if isinstance(factor_data, dict) and factor_data.get("raw_score"):
+                                    trigger_info.append(f"{factor_name}: {factor_data['raw_score']}/100")
+
+                            alert_message = (
+                                f"*{lead_data.get('name', 'Unknown')}* just hit score *{score}* (was {previous_score or 'unscored'})\n"
+                                f"Building: {building_info}\n"
+                                f"Last message: _{message[:100] if message else '(auto)'}_ \n"
+                                f"Factor breakdown: {', '.join(trigger_info)}"
+                            )
+                            await alert_mgr.send(
+                                alert_type="hot_lead_alert",
+                                message=alert_message,
+                                level=AlertLevel.WARNING,
+                                contact_id=contact_id,
+                                entity_id=f"hot_lead:{contact_id}",
+                                extra={
+                                    "Score": str(score),
+                                    "Tier": tier,
+                                    "Building": building_info,
+                                },
+                            )
+                        except Exception:
+                            logger.warning("lead_score.slack_alert_failed", trace_id=trace_id)
+
+                    logger.info(
+                        "lead_score.computed",
+                        trace_id=trace_id,
+                        contact_id=contact_id,
+                        score=score,
+                        tier=tier,
+                        previous_score=previous_score,
+                        crossed_hot=crossed_hot,
+                    )
+            except Exception:
+                logger.exception("lead_score.stage_failed", trace_id=trace_id)
+                # Fail-open: scoring failure must NOT block the pipeline
+
+        # -- Stage 8.8: Conversation Summary Generation --
+        if settings.LEAD_SCORE_ENABLED and contact_id and inbound.direction == "inbound":
+            try:
+                from app.services.conversation_summary import ConversationSummaryService
+
+                summary_service = ConversationSummaryService(lead_repo, claude_service)
+                summary_result = await summary_service.maybe_generate_summary(contact_id)
+                if summary_result:
+                    logger.info(
+                        "conversation_summary.generated",
+                        trace_id=trace_id,
+                        contact_id=contact_id,
+                        summary_length=len(summary_result.get("summary", "")),
+                    )
+            except Exception:
+                logger.exception("conversation_summary.stage_failed", trace_id=trace_id)
+                # Fail-open: summary failure must NOT block the pipeline
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(
