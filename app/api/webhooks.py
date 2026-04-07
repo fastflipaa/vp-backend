@@ -132,6 +132,13 @@ async def shadow_inbound(request: Request) -> JSONResponse:
     """
     trace_id = str(uuid.uuid4())
 
+    # Out-of-band ground truth: record this hit BEFORE any try/except.
+    # If the receiver is reached at all, this fires. The scheduled
+    # ground_truth_check task compares this count vs successful
+    # deliveries to detect silent pipeline death.
+    from app.services.monitoring.ground_truth_tracker import record_inbound
+    record_inbound(trace_id)
+
     try:
         raw_payload = await request.json()
     except Exception:

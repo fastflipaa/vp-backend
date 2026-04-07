@@ -167,6 +167,13 @@ class ResponseDeliveryService:
                     error=str(e),
                 )
 
+        # Out-of-band ground truth: record successful delivery to GHL.
+        # Counter-pair to record_inbound() in webhooks.py. The scheduled
+        # ground_truth_check task compares the two to detect silent
+        # pipeline death.
+        from app.services.monitoring.ground_truth_tracker import record_delivery
+        record_delivery(trace_id)
+
         logger.info(
             "delivery.success",
             contact_id=contact_id,

@@ -37,6 +37,7 @@ import app.tasks.pipeline_sync_task  # noqa: F401, E402
 import app.tasks.doc_delivery_task  # noqa: F401, E402
 import app.tasks.scheduled.conversation_quality_scan  # noqa: F401, E402
 import app.tasks.scheduled.system_health_scan  # noqa: F401, E402
+import app.tasks.scheduled.ground_truth_check  # noqa: F401, E402
 import app.tasks.scheduled.lead_operator  # noqa: F401, E402
 import app.tasks.scheduled.conversation_scorer  # noqa: F401, E402
 import app.tasks.scheduled.lesson_lifecycle  # noqa: F401, E402
@@ -111,6 +112,10 @@ celery_app.conf.beat_schedule = {
     "system-health-scan-5min": {
         "task": "scheduled.system_health_scan",
         "schedule": crontab(minute="*/5"),
+    },
+    "ground-truth-check-10min": {
+        "task": "scheduled.ground_truth_check",
+        "schedule": crontab(minute="*/10"),
     },
     "lead-operator-sweep-3h": {
         "task": "scheduled.lead_operator_sweep",
