@@ -561,7 +561,14 @@ class TestLessonLearned:
         assert lid1 not in result_ids
 
     async def test_check_lesson_exists_for_pattern(self, neo4j_driver):
-        """check_lesson_exists_for_pattern finds lessons with matching rule text."""
+        """check_lesson_exists_for_pattern matches on the source_pattern field.
+
+        The production query in
+        ``app/repositories/learning_repository.py:_check_lesson_exists_for_pattern_tx``
+        does an EXACT match on ``ll.source_pattern``, not a substring match
+        on ``ll.rule``. The test must seed the lesson with ``source_pattern``
+        set to the value it intends to query.
+        """
         repo = LearningRepository(neo4j_driver)
 
         await repo.create_lesson_learned(
@@ -569,6 +576,7 @@ class TestLessonLearned:
             why="Engagement",
             severity="warning",
             confidence=0.5,
+            source_pattern="repetition",
         )
 
         assert await repo.check_lesson_exists_for_pattern("repetition") is True
