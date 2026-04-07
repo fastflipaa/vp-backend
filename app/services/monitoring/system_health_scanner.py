@@ -98,7 +98,15 @@ class SystemHealthScanner:
         """Check sliding-window error counters.
 
         Error keys are incremented by the system (processing task failures,
-        gate failures, etc.) using the pattern: monitor:errors:{category}
+        gate failures, etc.) using the pattern: monitor:errors:{category}.
+
+        ``task_uncaught`` is special: it is incremented by the
+        ``task_failure`` Celery signal handler in
+        ``app.observability_signals`` for ANY uncaught exception escaping
+        a task body, regardless of whether the task itself reached its
+        own try/except. This catches failure modes that bypass the
+        per-category counters (SM instantiation errors, import errors,
+        validation errors raised before reaching task logic).
         """
         categories = [
             "processing_task",
@@ -106,6 +114,7 @@ class SystemHealthScanner:
             "delivery_failed",
             "claude_timeout",
             "neo4j_error",
+            "task_uncaught",
         ]
         counts = {}
         for cat in categories:

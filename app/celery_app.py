@@ -16,6 +16,12 @@ celery_app = Celery(
     backend=settings.redis_result_url,
 )
 
+# Register observability signals (worker startup smoke test + task_failure
+# handler). MUST be imported before any task module so the worker_process_init
+# handler is registered before workers fork. See app/observability_signals.py
+# for the regression context that motivated this module.
+import app.observability_signals  # noqa: F401, E402
+
 # Register tasks explicitly (autodiscover expects tasks.py, our files have custom names)
 import app.tasks.test_task  # noqa: F401, E402
 import app.tasks.gate_tasks  # noqa: F401, E402
