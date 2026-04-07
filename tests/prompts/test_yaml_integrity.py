@@ -1,9 +1,11 @@
 """YAML prompt file integrity tests.
 
-Validates all YAML prompt files load without error, have required fields,
-and the expected file count is correct.
-
-v1/ has 9 YAML files + 1 fallback.yaml at the levitas/ root = 10 total.
+Validates all REQUIRED YAML prompt files load without error and have
+required fields. The exact file count is no longer enforced because
+new prompts get added with each phase (Phase 19 added followup.yaml
+with attempt-based prompts, Phase 20 added reengagement_outreach.yaml
+and drip_reentry.yaml). The test now verifies the REQUIRED set is
+present rather than locking the count.
 """
 
 from __future__ import annotations
@@ -21,26 +23,42 @@ V1_DIR = LEVITAS_DIR / "v1"
 
 
 class TestYamlFileCount:
-    """Verify expected number of YAML files exist."""
+    """Verify the REQUIRED YAML files exist (not exact count).
 
-    def test_v1_has_exactly_9_files(self):
-        """v1/ directory has exactly 9 YAML prompt files."""
-        yaml_files = list(V1_DIR.glob("*.yaml"))
-        assert len(yaml_files) == 9, (
-            f"Expected 9 YAML files in v1/, found {len(yaml_files)}: "
-            f"{[f.name for f in yaml_files]}"
-        )
+    New prompts may be added with each phase. The test enforces a
+    minimum required set rather than an exact count so that adding
+    a new prompt doesn't require updating this test (which is what
+    caused the test to silently rot through Phases 19 and 20).
+    """
+
+    REQUIRED_V1_FILES = {
+        "classification.yaml",
+        "followup.yaml",       # Phase 19
+        "greeting.yaml",
+        "handoff.yaml",
+        "human_reentry.yaml",
+        "qualifying.yaml",
+        "recovery.yaml",
+        "reengagement.yaml",
+        "scheduling.yaml",
+    }
+
+    def test_required_v1_files_present(self):
+        """All historically-required v1/ YAML files exist."""
+        present = {f.name for f in V1_DIR.glob("*.yaml")}
+        missing = self.REQUIRED_V1_FILES - present
+        assert not missing, f"Missing required v1/ files: {missing}"
 
     def test_fallback_exists_at_root(self):
         """fallback.yaml exists at the levitas/ root (not in v1/)."""
         assert (LEVITAS_DIR / "fallback.yaml").exists()
 
-    def test_total_yaml_count_is_10(self):
-        """Total YAML files (v1/ + root) = 10."""
+    def test_v1_has_at_least_required_count(self):
+        """v1/ has at least the required number of files (more is fine)."""
         v1_files = list(V1_DIR.glob("*.yaml"))
-        root_files = list(LEVITAS_DIR.glob("*.yaml"))
-        total = len(v1_files) + len(root_files)
-        assert total == 10, f"Expected 10 total, found {total}"
+        assert len(v1_files) >= len(self.REQUIRED_V1_FILES), (
+            f"v1/ has {len(v1_files)} files, expected >= {len(self.REQUIRED_V1_FILES)}"
+        )
 
 
 class TestV1YamlIntegrity:
@@ -77,7 +95,6 @@ class TestV1YamlIntegrity:
         "yaml_name",
         [
             "classification.yaml",
-            "followup.yaml",
             "greeting.yaml",
             "handoff.yaml",
             "qualifying.yaml",
@@ -86,13 +103,27 @@ class TestV1YamlIntegrity:
         ],
     )
     def test_state_specific_yaml_has_system_prompt(self, yaml_name: str):
-        """State-specific YAMLs have a system_prompt field."""
+        """Single-prompt state YAMLs have a system_prompt field.
+
+        followup.yaml is excluded because Phase 19 introduced multi-attempt
+        prompts (system_prompt_attempt_1/2/3) -- see test_followup_has_attempt_prompts.
+        reengagement.yaml is excluded because it uses tiered prompts
+        (system_prompt_hot/warm/cold) -- see test_reengagement_has_tiered_prompts.
+        """
         path = V1_DIR / yaml_name
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert "system_prompt" in data, (
             f"{yaml_name} missing 'system_prompt' field. Keys: {list(data.keys())}"
         )
+
+    def test_followup_has_attempt_prompts(self):
+        """followup.yaml uses system_prompt_attempt_1/2/3 (Phase 19 schema)."""
+        path = V1_DIR / "followup.yaml"
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        for key in ("system_prompt_attempt_1", "system_prompt_attempt_2", "system_prompt_attempt_3"):
+            assert key in data, f"followup.yaml missing '{key}'"
 
     def test_reengagement_has_tiered_prompts(self):
         """reengagement.yaml uses system_prompt_hot/warm/cold (not system_prompt)."""

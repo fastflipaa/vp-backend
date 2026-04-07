@@ -57,16 +57,43 @@ class TestProcessorRouter:
 
     @pytest.mark.parametrize(
         "terminal_state",
-        ["BROKER", "CLOSED", "RE_ENGAGE", "FOLLOW_UP", "NON_RESPONSIVE", "RECOVERY"],
+        # Truly terminal/no-processor states. FOLLOW_UP and RE_ENGAGE were
+        # added as real processors in Phases 19 and 20 -- see
+        # test_followup_maps_to_followup_processor and
+        # test_reengage_maps_to_reengagement_processor below.
+        ["BROKER", "CLOSED", "NON_RESPONSIVE", "RECOVERY"],
     )
     def test_terminal_and_deferred_states_return_none(self, router: ProcessorRouter, terminal_state: str):
-        """Terminal and deferred states have no processor (returns None)."""
+        """Truly terminal states have no processor (returns None)."""
         assert router.get_processor(terminal_state) is None
+
+    def test_followup_maps_to_followup_processor(self, router: ProcessorRouter):
+        """FOLLOW_UP -> FollowUpProcessor (Phase 19)."""
+        processor = router.get_processor("FOLLOW_UP")
+        assert processor is not None
+        assert processor.__name__ == "FollowUpProcessor"
+
+    def test_reengage_maps_to_reengagement_processor(self, router: ProcessorRouter):
+        """RE_ENGAGE -> ReEngagementProcessor (Phase 20)."""
+        processor = router.get_processor("RE_ENGAGE")
+        assert processor is not None
+        assert processor.__name__ == "ReEngagementProcessor"
 
     def test_unknown_state_returns_none(self, router: ProcessorRouter):
         """Unknown state string returns None."""
         assert router.get_processor("COMPLETELY_UNKNOWN") is None
 
-    def test_processor_map_has_expected_size(self):
-        """PROCESSOR_MAP has exactly 6 entries (5 active states + BUILDING_INFO)."""
-        assert len(PROCESSOR_MAP) == 6
+    def test_processor_map_has_required_entries(self):
+        """PROCESSOR_MAP has all the active-state entries.
+
+        The exact count is no longer enforced because new processors may be
+        added with each phase. The test verifies the REQUIRED set is mapped.
+        """
+        required = {
+            "GREETING", "QUALIFYING", "SCHEDULING", "QUALIFIED", "HANDOFF",
+            "BUILDING_INFO",  # merged into qualifying
+            "FOLLOW_UP",      # Phase 19
+            "RE_ENGAGE",      # Phase 20
+        }
+        missing = required - set(PROCESSOR_MAP.keys())
+        assert not missing, f"PROCESSOR_MAP missing required entries: {missing}"
