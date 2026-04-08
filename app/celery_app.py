@@ -117,10 +117,16 @@ celery_app.conf.beat_schedule = {
         "task": "scheduled.ground_truth_check",
         "schedule": crontab(minute="*/10"),
     },
-    "lead-operator-sweep-3h": {
-        "task": "scheduled.lead_operator_sweep",
-        "schedule": crontab(minute=30, hour="*/3"),  # Every 3 hours at :30
-    },
+    # DISABLED 2026-04-08: operator was routing orphan form-fill leads through
+    # process_message as synthetic "[Operator re-engagement]" events, causing
+    # the AI to send first-touch greetings to 6-month-old form fills. Scorer
+    # flagged this as repetition (frequency=80) + missed_intent. Re-enable
+    # only after separating classification from outreach. See Serena memory
+    # apr08_second_bug_operator_rengaging_orphans for full context.
+    # "lead-operator-sweep-3h": {
+    #     "task": "scheduled.lead_operator_sweep",
+    #     "schedule": crontab(minute=30, hour="*/3"),
+    # },
     "conversation-scorer-30min": {
         "task": "scheduled.conversation_scorer",
         "schedule": crontab(minute="*/30"),
